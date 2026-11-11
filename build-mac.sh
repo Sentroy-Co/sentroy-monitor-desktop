@@ -14,12 +14,24 @@ export APPLE_ID APPLE_TEAM_ID="$TEAM_ID" APPLE_PASSWORD="$APP_PASSWORD"
 
 npm install --no-audit --no-fund
 npm test
-npx tauri build --target universal-apple-darwin
+# Tauri signs, notarizes and staples the .app. The DMG is made with plain
+# hdiutil: Tauri's DMG step drives Finder over AppleScript, which times out
+# in headless/background sessions.
+if [ "${SKIP_APP_BUILD:-}" != "1" ]; then
+  npx tauri build --target universal-apple-darwin --bundles app
+fi
 
-APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/Sentroy Monitor.app"
-DMG=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -1)
+VERSION=$(node -p "require('./package.json').version")
+OUT="src-tauri/target/universal-apple-darwin/release/bundle"
+APP="$OUT/macos/Sentroy Monitor.app"
+DMG="$OUT/Sentroy-Monitor-${VERSION}-mac-universal.dmg"
+STAGE=$(mktemp -d)
+cp -R "$APP" "$STAGE/"
+ln -s /Applications "$STAGE/Applications"
+rm -f "$DMG"
+hdiutil create -volname "Sentroy Monitor" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+rm -rf "$STAGE"
 
-# Tauri notarizes and staples the .app; the DMG wrapper gets its own ticket.
 codesign --force --sign "$SIGN_ID" --timestamp "$DMG"
 xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD" --wait
 xcrun stapler staple "$DMG"
