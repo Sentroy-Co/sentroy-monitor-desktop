@@ -5,6 +5,7 @@
   "description": "Sentroy Monitor desktop agent (Tauri 2 / Rust).",
   "license": "FSL-1.1-ALv2",
   "scripts": {
+    "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "icons": "tauri icon design/app-icon.png",
