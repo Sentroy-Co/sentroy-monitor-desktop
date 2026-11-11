@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sentroy Monitor</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <div class="drag" data-tauri-drag-region></div>
+
+    <!-- First run: what is (and is not) collected -->
+    <section id="consent" class="screen" hidden>
+      <img class="logo" src="logo.png" alt="" />
+      <h1 data-t="consentTitle"></h1>
+      <p data-t="consentCollected"></p>
+      <ul class="list">
+        <li data-t="consentTime"></li>
+        <li data-t="consentActivity"></li>
+        <li data-t="consentApps"></li>
+      </ul>
+      <p class="muted" data-t="consentNever"></p>
+      <button id="accept" class="primary wide" data-t="consentAccept"></button>
+    </section>
+
+    <!-- Device sign-in -->
+    <section id="signin" class="screen" hidden>
+      <img class="logo" src="logo.png" alt="" />
+      <h1 data-t="signinTitle"></h1>
+      <div id="signin-idle">
+        <p class="muted" data-t="signinIntro"></p>
+        <button id="login" class="primary wide" data-t="signinButton"></button>
+        <details class="server">
+          <summary data-t="server"></summary>
+          <form id="server-form">
+            <input id="server" type="url" spellcheck="false" autocomplete="off" />
+          </form>
+        </details>
+      </div>
+      <div id="signin-pending" hidden>
+        <p class="muted" data-t="signinCode"></p>
+        <p id="user-code" class="code"></p>
+        <p class="muted waiting"><span class="spinner"></span><span data-t="signinWaiting"></span></p>
+        <div class="row">
+          <button id="open-again" data-t="openAgain"></button>
+          <button id="cancel-login" class="ghost" data-t="cancel"></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tracker -->
+    <section id="main" class="screen" hidden>
+      <header class="top">
+        <div class="who">
+          <strong id="company"></strong>
+          <span id="user" class="muted"></span>
+        </div>
+        <details class="menu">
+          <summary aria-label="Menu">⋯</summary>
+          <div class="menu-items">
+            <button id="dashboard" data-t="dashboard"></button>
+            <button id="refresh" data-t="refresh"></button>
+            <button id="signout" class="danger" data-t="signOut"></button>
+          </div>
+        </details>
+      </header>
+
+      <label class="field">
+        <span data-t="project"></span>
+        <select id="project"></select>
+      </label>
+      <label class="field">
+        <span data-t="task"></span>
+        <select id="task"></select>
+      </label>
+      <form id="new-task" class="new-task">
+        <input id="new-task-title" maxlength="200" autocomplete="off" />
+        <button data-t="add"></button>
+      </form>
+
+      <div class="timer">
+        <button id="toggle" class="play" aria-pressed="false"><span class="glyph"></span></button>
+        <div>
+          <div id="clock" class="clock">00:00:00</div>
+          <div class="stats">
+            <span><span data-t="today"></span> <b id="today">00:00</b></span>
+            <span><span data-t="activity"></span> <b id="activity">—</b></span>
+          </div>
+          <div class="meter"><div id="meter-bar"></div></div>
+        </div>
+      </div>
+
+      <footer class="status">
+        <span><i id="dot" class="dot"></i><span id="online"></span></span>
+        <span id="sync" class="muted"></span>
+      </footer>
+    </section>
+
+    <div id="notice" class="notice" role="status" hidden>
+      <span id="notice-text"></span>
+      <button id="notice-close" aria-label="Close">×</button>
+    </div>
+    <p id="version" class="version"></p>
+  </body>
+</html>
