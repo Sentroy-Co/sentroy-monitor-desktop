@@ -1,7 +1,7 @@
-//! Activity sampling. Privacy by construction: we only ask the OS how long ago
-//! the last keyboard/mouse event happened and which app is in front. No key
-//! codes, no screen contents, no window titles or URLs are ever read, so no
-//! Accessibility / Input Monitoring / Screen Recording permission is needed.
+//! Activity sampling. Privacy by construction: we only ask the OS (see `os`)
+//! how long ago the last keyboard/mouse event happened and which app is in
+//! front. No key codes, window titles or URLs are ever read, so no
+//! Accessibility / Input Monitoring permission is needed.
 
 use std::collections::HashMap;
 
@@ -14,6 +14,10 @@ pub const ACTIVE_WINDOW_SECS: f64 = 1.5;
 pub const IDLE_THRESHOLD_SECS: f64 = 300.0;
 /// Samples are cut at this length (the server accepts up to 15 minutes).
 pub const SAMPLE_SECS: i64 = 60;
+/// Used when the OS cannot report input idle time (pure Wayland): the second is
+/// tracked but counts as neither active nor idle, so it never triggers the
+/// idle auto-stop.
+pub const UNKNOWN_INPUT_SECS: f64 = 60.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -70,12 +74,13 @@ impl Accumulator {
         }
     }
 
-
-
     pub fn tracked_seconds(&self) -> u32 {
         self.ticks
     }
 
+    pub fn task_id(&self) -> Option<&str> {
+        self.task_id.as_deref()
+    }
 
     /// Closes the sample at `end`. Counts are clamped to the wall-clock span so a
     /// late tick (sleep/wake) can never produce more seconds than elapsed.
@@ -115,41 +120,6 @@ pub fn activity_percent(active: u32, tracked: u32, idle: u32) -> u32 {
     }
 }
 
-#[cfg(target_os = "macos")]
-mod os {
-    #[link(name = "CoreGraphics", kind = "framework")]
-    extern "C" {
-        fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
-    }
-
-    /// kCGEventSourceStateCombinedSessionState = 0, kCGAnyInputEventType = ~0.
-    pub fn seconds_since_input() -> f64 {
-        unsafe { CGEventSourceSecondsSinceLastEventType(0, u32::MAX) }
-    }
-
-    pub fn frontmost_app() -> Option<String> {
-        use objc2_app_kit::NSWorkspace;
-        #[allow(unused_unsafe)]
-        unsafe {
-            let ws = NSWorkspace::sharedWorkspace();
-            let app = ws.frontmostApplication()?;
-            let name = app.localizedName()?;
-            Some(name.to_string())
-        }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-mod os {
-    pub fn seconds_since_input() -> f64 {
-        0.0
-    }
-    pub fn frontmost_app() -> Option<String> {
-        None
-    }
-}
-
-pub use os::{frontmost_app, seconds_since_input};
 
 #[cfg(test)]
 mod tests {

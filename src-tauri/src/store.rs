@@ -1,5 +1,6 @@
 //! Local persistence: settings and the offline upload queue as JSON files in
-//! the app data directory; the device token in the macOS Keychain.
+//! the app data directory; the device token in the OS credential store (macOS
+//! Keychain, Windows Credential Manager, Secret Service on Linux).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::activity::Sample;
+use crate::api::Policy;
 
 pub const DEFAULT_SERVER: &str = "https://monitor.sentroy.com";
 const KEYCHAIN_SERVICE: &str = "com.sentroy.monitor";
@@ -26,6 +28,73 @@ pub struct Settings {
     /// Local `YYYY-MM-DD` and the seconds tracked on it, for the "today" counter.
     pub today: Option<String>,
     pub today_seconds: u64,
+    /// Seconds per task tracked on `today`, from finished samples.
+    pub today_tasks: Vec<TodayTask>,
+    /// Activity per wall-clock ten-minute slot, most recent last.
+    pub bars: Vec<Bar>,
+    /// Last policy received from the server (used until the next refresh).
+    pub policy: Policy,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct TodayTask {
+    pub task_id: Option<String>,
+    pub project_id: Option<String>,
+    pub title: Option<String>,
+    pub seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Bar {
+    /// Unix seconds / 600.
+    pub slot: i64,
+    pub tracked: u32,
+    pub active: u32,
+    pub idle: u32,
+}
+
+/// Number of ten-minute bars the UI shows.
+pub const BARS: usize = 6;
+
+impl Settings {
+    /// Starts a new day's counters when the local date changed.
+    pub fn roll_day(&mut self, day: &str) {
+        if self.today.as_deref() != Some(day) {
+            self.today = Some(day.to_string());
+            self.today_seconds = 0;
+            self.today_tasks.clear();
+        }
+    }
+
+    /// Adds finished-sample seconds to a task's total for today.
+    pub fn add_task_time(&mut self, task_id: Option<String>, project_id: Option<String>, title: Option<String>, seconds: u64) {
+        match self.today_tasks.iter_mut().find(|t| t.task_id == task_id) {
+            Some(t) => {
+                t.seconds += seconds;
+                if title.is_some() {
+                    t.title = title;
+                }
+                if project_id.is_some() {
+                    t.project_id = project_id;
+                }
+            }
+            None => self.today_tasks.push(TodayTask { task_id, project_id, title, seconds }),
+        }
+    }
+
+    /// Records one tracked second into the ten-minute bar of `slot`.
+    pub fn add_bar_second(&mut self, slot: i64, active: bool, idle: bool) {
+        if self.bars.last().map(|b| b.slot) != Some(slot) {
+            self.bars.push(Bar { slot, ..Default::default() });
+        }
+        let b = self.bars.last_mut().expect("just pushed");
+        b.tracked += 1;
+        b.active += active as u32;
+        b.idle += idle as u32;
+        self.bars.retain(|b| b.slot > slot - BARS as i64);
+    }
 }
 
 impl Default for Settings {
@@ -40,6 +109,9 @@ impl Default for Settings {
             company_slug: None,
             today: None,
             today_seconds: 0,
+            today_tasks: Vec::new(),
+            bars: Vec::new(),
+            policy: Policy::default(),
         }
     }
 }
@@ -149,6 +221,38 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"consentAccepted":true,"future":1}"#).unwrap();
         assert!(s.consent_accepted);
         assert_eq!(s.server_url, DEFAULT_SERVER);
+    }
+
+    #[test]
+    fn today_tasks_accumulate_and_reset_on_a_new_day() {
+        let mut s = Settings::default();
+        s.roll_day("2026-11-11");
+        s.add_task_time(Some("t1".into()), None, Some("Design".into()), 60);
+        s.add_task_time(None, None, None, 30);
+        s.add_task_time(Some("t1".into()), Some("p".into()), None, 45);
+        assert_eq!(s.today_tasks.len(), 2);
+        assert_eq!(s.today_tasks[0].seconds, 105);
+        assert_eq!(s.today_tasks[0].title.as_deref(), Some("Design"));
+        assert_eq!(s.today_tasks[0].project_id.as_deref(), Some("p"));
+        s.roll_day("2026-11-11");
+        assert_eq!(s.today_tasks.len(), 2);
+        s.roll_day("2026-11-12");
+        assert!(s.today_tasks.is_empty());
+    }
+
+    #[test]
+    fn bars_keep_the_last_six_slots() {
+        let mut s = Settings::default();
+        for slot in 0..10 {
+            s.add_bar_second(slot, true, false);
+            s.add_bar_second(slot, false, false);
+        }
+        assert_eq!(s.bars.len(), BARS);
+        assert_eq!(s.bars[0].slot, 4);
+        assert_eq!((s.bars[5].tracked, s.bars[5].active), (2, 1));
+        // A gap drops old slots too.
+        s.add_bar_second(100, false, true);
+        assert_eq!(s.bars.len(), 1);
     }
 
     #[test]

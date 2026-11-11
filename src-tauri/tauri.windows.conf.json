@@ -1,0 +1,21 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Sentroy Monitor",
+        "width": 380,
+        "height": 600,
+        "minWidth": 340,
+        "minHeight": 480,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "targets": [
+      "nsis",
+      "msi"
+    ]
+  }
+}

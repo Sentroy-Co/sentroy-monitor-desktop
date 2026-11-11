@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Sentroy Monitor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.sentroy.monitor",
   "build": {
     "frontendDist": "../ui"
@@ -14,9 +14,9 @@
         "label": "main",
         "title": "Sentroy Monitor",
         "width": 380,
-        "height": 640,
+        "height": 600,
         "minWidth": 340,
-        "minHeight": 560,
+        "minHeight": 480,
         "resizable": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
@@ -28,15 +28,46 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "category": "Productivity",
     "shortDescription": "Time tracking for Sentroy Monitor",
     "copyright": "© 2026 Sentroy",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "macOS": {
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true,
       "entitlements": "entitlements.plist"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "utils"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMkNFN0IxQkZFQzg1NDQKUldSRWhleS9zZWNzTXZzRzJCdEZuMWM5VWhYdGh2Mks2aWxJdmhpT1c3VWZORGdXc3AraW1JelUK",
+      "endpoints": [
+        "https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

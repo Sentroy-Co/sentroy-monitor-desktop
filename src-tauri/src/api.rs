@@ -59,11 +59,62 @@ pub struct Company {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScreenshotPolicy {
+    pub enabled: bool,
+    pub per_ten_minutes: u32,
+    pub blur: bool,
+}
+
+impl Default for ScreenshotPolicy {
+    fn default() -> Self {
+        ScreenshotPolicy { enabled: false, per_ten_minutes: 1, blur: false }
+    }
+}
+
+/// What the company decided for this agent (`/api/agent/me` → `policy`).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Policy {
+    pub screenshots: ScreenshotPolicy,
+    pub idle_stop_minutes: u32,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Policy { screenshots: ScreenshotPolicy::default(), idle_stop_minutes: 30 }
+    }
+}
+
+impl Policy {
+    /// The policy with server values clamped to what the agent supports.
+    pub fn sanitized(mut self) -> Self {
+        self.idle_stop_minutes = self.idle_stop_minutes.clamp(5, 120);
+        self.screenshots.per_ten_minutes = self.screenshots.per_ten_minutes.clamp(1, 3);
+        self
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Me {
     pub device: Named,
     pub user: Named,
     pub company: Option<Company>,
+    #[serde(default)]
+    pub policy: Option<Policy>,
+}
+
+/// Outcome of one screenshot upload.
+#[derive(Debug, PartialEq)]
+pub enum ShotUpload {
+    /// Stored (or already stored): delete the local file.
+    Done,
+    /// The server will never take it (400/403/413): drop the local file.
+    Drop,
+    /// Network or server trouble: keep it for later.
+    Retry,
+    Unauthorized,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -86,6 +137,15 @@ pub struct Catalog {
 struct ErrorBody {
     error: Option<String>,
     message: Option<String>,
+}
+
+fn shot_outcome(status: StatusCode) -> ShotUpload {
+    match status.as_u16() {
+        200..=299 => ShotUpload::Done,
+        401 => ShotUpload::Unauthorized,
+        400 | 403 | 413 => ShotUpload::Drop,
+        _ => ShotUpload::Retry,
+    }
 }
 
 pub struct Api {
@@ -185,6 +245,36 @@ impl Api {
         Ok(())
     }
 
+    /// Uploads one JPEG screenshot (the id makes retries idempotent).
+    pub fn upload_screenshot(
+        &self,
+        token: &str,
+        id: &str,
+        taken_at: chrono::DateTime<chrono::Utc>,
+        width: u32,
+        height: u32,
+        jpeg: Vec<u8>,
+    ) -> ShotUpload {
+        let res = self
+            .http
+            .post(self.url("/api/agent/screenshots"))
+            .bearer_auth(token)
+            .query(&[
+                ("id", id.to_string()),
+                ("takenAt", taken_at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
+                ("width", width.to_string()),
+                ("height", height.to_string()),
+            ])
+            .header(reqwest::header::CONTENT_TYPE, "image/jpeg")
+            .timeout(Duration::from_secs(60))
+            .body(jpeg)
+            .send();
+        match res {
+            Err(_) => ShotUpload::Retry,
+            Ok(r) => shot_outcome(r.status()),
+        }
+    }
+
     pub fn logout(&self, token: &str) -> Result<(), ApiError> {
         #[derive(Deserialize)]
         #[allow(dead_code)]
@@ -193,5 +283,43 @@ impl Api {
         }
         let _: Ok_ = Self::handle(self.http.post(self.url("/api/agent/logout")).bearer_auth(token).send())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn me_without_policy_uses_defaults() {
+        let me: Me = serde_json::from_str(r#"{"device":{"id":"d","name":"D"},"user":{"id":"u","name":"U"},"company":null}"#).unwrap();
+        assert!(me.policy.is_none());
+        assert_eq!(Policy::default().idle_stop_minutes, 30);
+    }
+
+    #[test]
+    fn parses_and_clamps_policy() {
+        let me: Me = serde_json::from_str(
+            r#"{"device":{"id":"d","name":"D"},"user":{"id":"u","name":"U"},"company":{"slug":"s","name":"S"},
+               "policy":{"screenshots":{"enabled":true,"perTenMinutes":9,"blur":true},"idleStopMinutes":2}}"#,
+        )
+        .unwrap();
+        let p = me.policy.unwrap().sanitized();
+        assert!(p.screenshots.enabled && p.screenshots.blur);
+        assert_eq!((p.screenshots.per_ten_minutes, p.idle_stop_minutes), (3, 5));
+        let partial: Policy = serde_json::from_str(r#"{"screenshots":{"enabled":true}}"#).unwrap();
+        assert_eq!((partial.screenshots.per_ten_minutes, partial.idle_stop_minutes), (1, 30));
+    }
+
+    #[test]
+    fn screenshot_status_handling() {
+        assert_eq!(shot_outcome(StatusCode::CREATED), ShotUpload::Done);
+        assert_eq!(shot_outcome(StatusCode::OK), ShotUpload::Done);
+        assert_eq!(shot_outcome(StatusCode::FORBIDDEN), ShotUpload::Drop);
+        assert_eq!(shot_outcome(StatusCode::PAYLOAD_TOO_LARGE), ShotUpload::Drop);
+        assert_eq!(shot_outcome(StatusCode::BAD_REQUEST), ShotUpload::Drop);
+        assert_eq!(shot_outcome(StatusCode::UNAUTHORIZED), ShotUpload::Unauthorized);
+        assert_eq!(shot_outcome(StatusCode::BAD_GATEWAY), ShotUpload::Retry);
+        assert_eq!(shot_outcome(StatusCode::TOO_MANY_REQUESTS), ShotUpload::Retry);
     }
 }
