@@ -449,7 +449,9 @@ fn upload_shots(shared: &Shared, server: &str, token: &str) {
             shared.shots.remove(&shot);
             continue;
         };
-        match api.upload_screenshot(token, &shot.id, shot.taken_at, shot.width, shot.height, jpeg) {
+        let outcome = api.upload_screenshot(token, &shot.id, shot.taken_at, shot.width, shot.height, jpeg);
+        eprintln!("screenshot {}: {outcome:?}", shot.id);
+        match outcome {
             ShotUpload::Done | ShotUpload::Drop => shared.shots.remove(&shot),
             ShotUpload::Retry => {
                 shared.inner.lock().unwrap().online = false;

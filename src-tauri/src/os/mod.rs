@@ -80,3 +80,16 @@ pub fn capture_main_display() -> Result<image::RgbaImage, String> {
         Err(e) => imp::capture_fallback().map_err(|f| format!("{e}; fallback: {f}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Needs a display (and Screen Recording on macOS): `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn captures_the_main_display() {
+        let img = super::capture_main_display().expect("capture");
+        assert!(img.width() > 100 && img.height() > 100);
+        let (jpeg, w, _) = crate::screenshots::process(img, true).unwrap();
+        assert!(w <= crate::screenshots::MAX_WIDTH && jpeg.len() < crate::screenshots::MAX_BYTES);
+    }
+}
