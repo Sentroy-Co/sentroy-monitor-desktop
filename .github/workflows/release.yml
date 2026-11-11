@@ -20,7 +20,7 @@ jobs:
       max-parallel: 1
       matrix:
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04  # xcap/libspa needs PipeWire >= 1.0 headers
           - os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:

@@ -1049,9 +1049,11 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sentroy Monitor")
-        .run(|app, event| {
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_main(app);
+        .run(|_app, _event| {
+            // Clicking the Dock icon re-opens the window (macOS only event).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                show_main(_app);
             }
         });
 }
