@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { LANGS, STRINGS, pickLang, translator } from "./i18n.js"
-import { formatClock, groupTasks } from "./logic.js"
+import { activityBand, formatClock, formatHM, groupTasks, permissionsBlock, todayRows } from "./logic.js"
 
 test("every language has exactly the English keys", () => {
   const keys = Object.keys(STRINGS.en).sort()
@@ -17,6 +17,9 @@ test("placeholders survive translation", () => {
     const t = translator(lang)
     assert.match(t("queued", { n: 7 }), /7/)
     assert.match(t("synced", { time: "09:41" }), /09:41/)
+    assert.match(t("autoStopped", { n: 45 }), /45/)
+    assert.match(t("updateAvailable", { version: "9.8.7" }), /9\.8\.7/)
+    assert.match(t("shotsPolicy", { n: 2 }), /2/)
   }
 })
 
@@ -41,4 +44,31 @@ test("groupTasks filters by project and puts mine first", () => {
   ]
   assert.deepEqual(groupTasks(tasks, "p1"), { mine: [tasks[1]], others: [tasks[0]] })
   assert.deepEqual(groupTasks(tasks, null).mine.map((t) => t.id), ["b", "c"])
+})
+
+test("formatHM and activityBand", () => {
+  assert.equal(formatHM(0), "0:00")
+  assert.equal(formatHM(7 * 60 + 59), "0:07")
+  assert.equal(formatHM(2 * 3600 + 45 * 60), "2:45")
+  assert.equal(activityBand(null), "none")
+  assert.equal(activityBand(75), "high")
+  assert.equal(activityBand(45), "mid")
+  assert.equal(activityBand(5), "low")
+})
+
+test("permissionsBlock only for required, missing items", () => {
+  assert.equal(permissionsBlock([]), false)
+  assert.equal(permissionsBlock([{ kind: "notifications", required: false, granted: false }]), false)
+  assert.equal(permissionsBlock([{ kind: "screen", required: true, granted: true }]), false)
+  assert.equal(permissionsBlock([{ kind: "screen", required: true, granted: false }]), true)
+})
+
+test("todayRows computes shares and skips empty entries", () => {
+  const rows = todayRows([
+    { taskId: "a", seconds: 600 },
+    { taskId: "b", seconds: 300 },
+    { taskId: "c", seconds: 0 },
+  ])
+  assert.deepEqual(rows.map((r) => [r.taskId, r.share]), [["a", 1], ["b", 0.5]])
+  assert.deepEqual(todayRows(undefined), [])
 })
