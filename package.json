@@ -8,7 +8,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "icons": "tauri icon design/app-icon.png",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml && node --test ui/*.test.mjs"
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml && node --test ui/*.test.mjs scripts/*.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
