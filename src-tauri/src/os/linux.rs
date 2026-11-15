@@ -88,3 +88,8 @@ pub fn capture_fallback() -> Result<image::RgbaImage, String> {
 pub fn computer_name() -> Option<String> {
     std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
+
+/// Reading the browser's address bar is not supported here yet.
+pub fn active_browser_url() -> Option<(String, String)> {
+    None
+}

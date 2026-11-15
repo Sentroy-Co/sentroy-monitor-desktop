@@ -6,5 +6,9 @@
        distribution); no camera, microphone, screen or input-monitoring access. -->
   <key>com.apple.security.network.client</key>
   <true/>
+  <!-- Apple Events to supported browsers, only to read the active tab's address
+       when the company records websites (domain only). macOS asks once per browser. -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
 </dict>
 </plist>

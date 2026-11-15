@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Merged into the bundle's Info.plist by Tauri. Shown in the Automation
+       prompt, only if the company turned website tracking on. -->
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Sentroy Monitor reads the website name (for example github.com) of the tab in front while your timer runs, because your company turned this on. Pages and their content are never read.</string>
+</dict>
+</plist>

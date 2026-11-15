@@ -7,7 +7,7 @@
 ### Time tracking your team can read, and nothing it shouldn't.
 
 Start a timer on a task and the tray app records time and an activity percentage. The web app turns
-that into timelines and reports. It never records keystrokes, window titles or URLs.
+that into timelines and reports. It never records keystrokes, window titles or what's on a page.
 
 [**Download**](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) · [**Open the web app**](https://monitor.sentroy.com) · [**Self-host**](server/README.md) · [**Sentroy**](https://sentroy.com)
 
@@ -36,7 +36,8 @@ install with one click; the app never restarts on its own while you're tracking.
 |---|---|---|
 | **Time** | Only while *you* have started the timer | Anything after you stop it |
 | **Input** | How many seconds had keyboard or mouse input | Which keys, what you typed, where you clicked |
-| **Apps** | The name of the app in front ("Figma") | Window titles, URLs, file names, documents |
+| **Apps** | The name of the app in front ("Figma") | Window titles, file names, documents |
+| **Websites** | Only if your company turns it on: the site name of the tab in front ("github.com"), on macOS | Pages, searches, anything on the page |
 | **Screen** | Screenshots, only if your company turns them on: you get a notice every time, and they can be blurred on your computer before upload | Anything when screenshots are off (the default) |
 
 The agent needs no Accessibility or Input Monitoring permission. Data waits on disk while you're

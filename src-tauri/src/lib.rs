@@ -9,6 +9,7 @@ mod activity;
 mod api;
 mod os;
 mod screenshots;
+mod sites;
 mod store;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -327,10 +328,11 @@ fn ticker(app: AppHandle, shared: AppState) {
         let now = Utc::now();
         let mut shot = None;
         let policy = i.settings.policy.clone();
+        let site = sites::current(policy.sites && i.tracking.is_some(), front.as_deref());
         if let Some(t) = i.tracking.as_mut() {
             let active = since_input < activity::ACTIVE_WINDOW_SECS;
             let idle = since_input >= activity::IDLE_THRESHOLD_SECS;
-            t.acc.tick(since_input, front.as_deref());
+            t.acc.tick(since_input, front.as_deref(), site.as_deref());
             t.session_seconds += 1;
             t.recent.push_back((active, idle));
             while t.recent.len() > 600 {
