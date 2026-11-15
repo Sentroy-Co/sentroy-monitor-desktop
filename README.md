@@ -1,122 +1,86 @@
-# Sentroy Monitor — desktop agent
+<div align="center">
 
-The menu-bar / tray agent for [Sentroy Monitor](https://monitor.sentroy.com) on **macOS, Windows and
-Linux**: pick a task, start the timer, and the agent records tracked time and an activity percentage
-against that task. Built with **Tauri 2 + Rust**; the UI is plain HTML/JS in `ui/` (six languages: en,
-tr, ru, zh, es, id).
+<img src=".github/readme/icon.png" alt="" width="104">
 
-## What it records (and what it never does)
+# Sentroy Monitor
 
-While **you** have started the timer, once a second the agent asks the OS two things (`src-tauri/src/os/`):
+### Time tracking your team can read, and nothing it shouldn't.
 
-| Signal | macOS | Windows | Linux (X11) | Stored |
-|---|---|---|---|---|
-| Seconds since the last keyboard/mouse event | `CGEventSourceSecondsSinceLastEventType` | `GetLastInputInfo` | MIT-SCREEN-SAVER | active seconds (input within 1.5 s), idle seconds (no input ≥ 5 min) |
-| Frontmost app | `NSWorkspace` app name | foreground process exe name | `_NET_ACTIVE_WINDOW` → process name | seconds per app name |
+Start a timer on a task and the tray app records time and an activity percentage. The web app turns
+that into timelines and reports. It never records keystrokes, window titles or URLs.
 
-It never reads key codes, window titles or URLs, so it needs **no** Accessibility or Input Monitoring
-permission. Every minute becomes one sample (`{start, end, projectId, taskId, activeSeconds,
-idleSeconds, apps}`), queued on disk and uploaded every 30 s. The server de-duplicates by sample id,
-so retries never double count. After the company's idle limit (`policy.idleStopMinutes`, default 30
-minutes) without any input the timer stops by itself.
+[**Download**](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) · [**Open the web app**](https://monitor.sentroy.com) · [**Self-host**](server/README.md) · [**Sentroy**](https://sentroy.com)
 
-On a **Wayland** session an X11 client cannot see native Wayland input or windows: the agent still
-tracks time, but reports input as unknown (no activity percentage, no idle auto-stop), no app names,
-and takes no screenshots.
+<br>
 
-### Screenshots (only when the company turns them on)
+<img src=".github/readme/timeline.webp" alt="Timeline: ten-minute blocks with activity and the apps in use" width="70%">&nbsp;&nbsp;<img src=".github/readme/agent.webp" alt="Desktop agent with a running timer and the last hour of activity" width="26%">
 
-The company decides in Sentroy Monitor whether this agent takes screenshots (`policy` in
-`GET /api/agent/me`, re-read on start, on refresh and every 15 minutes). When they are **off** (the
-default) the agent never captures the screen. When they are **on**:
+</div>
 
-- only while the timer runs, `perTenMinutes` (1–3) screenshots of the main display at random moments
-  of each ten minutes of tracking;
-- downscaled to at most 1600 px wide; if the company asked for **blur**, the image is blurred on this
-  computer **before** it is written to disk or sent — the sharp image never leaves memory;
-- a visible notice ("Screenshot taken") every time, plus a system notification when the window is not
-  in front;
-- queued as JPEG in `screenshots/` in the app data folder (at most 200, oldest dropped) and uploaded to
-  `POST /api/agent/screenshots`; deleted after upload, and deleted on sign-out;
-- on macOS this needs the **Screen Recording** permission. The agent shows a permissions sheet on start
-  (and after sign-in / policy changes) and will not start the timer until it is granted; macOS applies
-  the grant after a restart (the sheet has a *Restart app* button). Windows and Linux need no permission.
+---
 
-A first-run consent screen explains all this before anything can be tracked; the company can see the
-data on the web timeline.
+### Get the app
 
-## Sign-in
+| | Download | Notes |
+|---|---|---|
+| **macOS** | [`.dmg`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Universal (Apple silicon + Intel), signed and notarized |
+| **Windows** | [`.exe` / `.msi`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Windows 10 and 11, x64 |
+| **Linux** | [`.AppImage` / `.deb`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Full tracking on X11; time only on Wayland |
 
-Device authorization flow (RFC 8628 style), no password ever enters the app:
+Sign in through your browser with a short code, so your password never goes into the app. Updates
+install with one click; the app never restarts on its own while you're tracking.
 
-1. `POST /api/agent/device/start` → a code such as `ABCD-EFGH`; the browser opens
-   `monitor.sentroy.com/connect?code=…`.
-2. The user signs in with their Sentroy account there, picks the company and approves.
-3. The agent polls `POST /api/agent/device/token` and receives a device token, stored in the OS
-   credential store under `com.sentroy.monitor` (macOS Keychain, Windows Credential Manager, Secret
-   Service on Linux). Settings and the offline queues live in the app data folder
-   (`~/Library/Application Support/com.sentroy.monitor/`, `%APPDATA%\com.sentroy.monitor\`,
-   `~/.local/share/com.sentroy.monitor/`).
+### What it sees
 
-Devices can be disconnected from the web (**Desktop app** page) or with *Sign out* in the agent.
+|  | Recorded | Never recorded |
+|---|---|---|
+| **Time** | Only while *you* have started the timer | Anything after you stop it |
+| **Input** | How many seconds had keyboard or mouse input | Which keys, what you typed, where you clicked |
+| **Apps** | The name of the app in front ("Figma") | Window titles, URLs, file names, documents |
+| **Screen** | Screenshots, only if your company turns them on: you get a notice every time, and they can be blurred on your computer before upload | Anything when screenshots are off (the default) |
 
-The server is `https://monitor.sentroy.com` by default; the sign-in screen has a *Server* field for
-other instances (`https://…`, or `http://localhost…` for development).
+The agent needs no Accessibility or Input Monitoring permission. Data waits on disk while you're
+offline and syncs when you're back. [The full detail →](docs/PRIVACY.md)
 
-## Develop
+### The web app
+
+<img src=".github/readme/tasks.webp" alt="Tasks with a search box that understands project:, status:, @me and due:" width="100%">
+
+- **Tasks and projects**: the work time is tracked against. Search is instant and forgives typos, and
+  it understands `project:mail status:open @me due:week`.
+- **Timeline**: every ten minutes of the day, with activity, the task and the apps in use.
+- **Reports**: time by person, project and day, with CSV export.
+- **Settings**: screenshots on or off, how often, blur, idle limit, and how long data is kept.
+- Available in English, Türkçe, Русский, 中文, Español and Bahasa Indonesia.
+
+### Run it your way
+
+**Hosted**: sign in at [monitor.sentroy.com](https://monitor.sentroy.com) with your Sentroy account.
+It's free; storing screenshots uses your Sentroy Storage plan.
+
+**Self-hosted**: one `docker compose up` gives you your own users, workspaces, SSO (OpenID Connect)
+and screenshot storage: Sentroy Storage in one click, any S3-compatible bucket, Firebase Storage or a
+local volume. [Set it up →](server/README.md)
+
+<details>
+<summary><b>Build from source</b></summary>
+
+<br>
+
+Tauri 2 and Rust, with a plain HTML/JS interface in `ui/`.
 
 ```bash
 npm install
-npm run dev     # tauri dev
-npm test        # cargo tests + UI tests (i18n parity, helpers)
+npm run dev     # run the app
+npm test        # Rust tests + UI tests
 ```
 
-To run against a local `apps/monitor` (monorepo), start it on port 3014 and set the server to
-`http://localhost:3014` on the sign-in screen.
+To work against a local server, start it on port 3014 and enter `http://localhost:3014` on the
+sign-in screen. Linux needs WebKitGTK, appindicator and the X11/PipeWire headers listed in
+`.github/workflows/release.yml`.
 
-Linux builds need the WebKitGTK/appindicator packages plus `libxcb*`, `libdbus-1-dev`,
-`libpipewire-0.3-dev`, `libgbm-dev`, `libegl-dev` and `libclang-dev` (see
-`.github/workflows/release.yml` for the full list).
+Releases and auto-update signing: [docs/RELEASING.md](docs/RELEASING.md).
 
-## Auto-update
+</details>
 
-The agent checks
-`https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest/download/latest.json` on start
-and every 6 hours (release builds only) and shows an *Install & restart* banner. Installing stops the
-timer and delivers queued data first; it never restarts by itself while the timer runs. Updates are
-verified with the public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); the private
-key is `~/.tauri/sentroy-monitor.key` locally and the `TAURI_SIGNING_PRIVATE_KEY` /
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets in CI.
-
-## Release
-
-1. Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`, commit,
-   tag `vX.Y.Z` and push the tag.
-2. **CI** (`.github/workflows/release.yml`) builds Windows (NSIS + MSI) and Linux (deb + AppImage),
-   signs the updater artifacts, and creates/updates the GitHub release for the tag with the installers
-   and a `latest.json` containing the `windows-x86_64` and `linux-x86_64` platforms (tauri-action merges
-   into an existing `latest.json`; the two jobs run one after the other so they cannot race).
-3. **macOS** (locally, after CI finished):
-
-   ```bash
-   ./build-mac.sh            # universal (arm64 + x64), signed, notarized, stapled
-   ```
-
-   Needs `SIGN_ID`, `APPLE_ID`, `TEAM_ID`, `APP_PASSWORD` in the environment (the same variables
-   `sentroy-desktop/build-mac.sh` uses), the `x86_64-apple-darwin` Rust target and the updater key
-   `~/.tauri/sentroy-monitor.key`. Output in `src-tauri/target/universal-apple-darwin/release/bundle/`:
-   the DMG, `Sentroy-Monitor-X.Y.Z-mac-universal.app.tar.gz` + `.sig`, and `latest-mac.json`
-   (`darwin-aarch64` + `darwin-x86_64`).
-4. Merge the mac platforms into the release's manifest and upload:
-
-   ```bash
-   V=X.Y.Z; B=src-tauri/target/universal-apple-darwin/release/bundle
-   gh release download v$V --pattern latest.json --output /tmp/latest-ci.json --clobber || true
-   node scripts/merge-latest-json.mjs /tmp/latest-ci.json $B/latest-mac.json -o $B/latest.json
-   gh release upload v$V $B/Sentroy-Monitor-$V-mac-universal.dmg \
-     $B/Sentroy-Monitor-$V-mac-universal.app.tar.gz $B/Sentroy-Monitor-$V-mac-universal.app.tar.gz.sig \
-     $B/latest.json --clobber
-   ```
-
-   `merge-latest-json.mjs` keeps every platform already in the release and refuses to merge different
-   versions, so the order of steps 2 and 3 does not matter as long as each upload merges.
+<div align="center"><sub>Part of <a href="https://github.com/Sentroy-Co">Sentroy</a> · Fair Source under <a href="LICENSE">FSL-1.1-ALv2</a> · <a href="https://sentroy.com">sentroy.com</a></sub></div>
