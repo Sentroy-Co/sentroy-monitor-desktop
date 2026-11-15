@@ -11,15 +11,29 @@ While **you** have started the timer, once a second the agent asks the OS two th
 | Seconds since the last keyboard/mouse event | `CGEventSourceSecondsSinceLastEventType` | `GetLastInputInfo` | MIT-SCREEN-SAVER | active seconds (input within 1.5 s), idle seconds (no input ≥ 5 min) |
 | Frontmost app | `NSWorkspace` app name | foreground process exe name | `_NET_ACTIVE_WINDOW` → process name | seconds per app name |
 
-It never reads key codes, window titles or URLs, so it needs **no** Accessibility or Input Monitoring
+It never reads key codes or window titles, so it needs **no** Accessibility or Input Monitoring
 permission. Every minute becomes one sample (`{start, end, projectId, taskId, activeSeconds,
-idleSeconds, apps}`), queued on disk and uploaded every 30 s. The server de-duplicates by sample id,
+idleSeconds, apps, sites?}`), queued on disk and uploaded every 30 s. The server de-duplicates by sample id,
 so retries never double count. After the company's idle limit (`policy.idleStopMinutes`, default 30
 minutes) without any input the timer stops by itself.
 
 On a **Wayland** session an X11 client cannot see native Wayland input or windows: the agent still
 tracks time, but reports input as unknown (no activity percentage, no idle auto-stop), no app names,
 and takes no screenshots.
+
+## Websites (only when the company turns them on)
+
+Off by default. When a workspace turns on **Settings → Tracking → Record websites**, the agent asks
+the browser in front for its active tab's address every 2 seconds (`src-tauri/src/sites.rs`) and keeps
+only the host name: `https://www.github.com/acme/repo?q=1` becomes `github.com`. Paths, queries, page
+titles and page content are never read or stored; `file:`, `about:`, browser pages, IP addresses and
+`localhost` are skipped. Each sample then carries seconds per domain (`sites`), and the server drops
+them again if the setting is off.
+
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Supported browsers | Safari, Chrome, Edge, Brave, Arc, Vivaldi, Opera, Chromium (AppleScript; Firefox has none) | not yet | not yet |
+| Permission | **Automation**, asked once per browser ("Sentroy Monitor wants to control …"). Declining just records no websites. | | |
 
 ## Screenshots (only when the company turns them on)
 

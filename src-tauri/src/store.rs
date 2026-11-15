@@ -196,7 +196,7 @@ mod tests {
     fn sample(i: i64) -> Sample {
         let t = Utc.with_ymd_and_hms(2026, 11, 11, 9, 0, 0).unwrap() + chrono::Duration::minutes(i);
         let mut a = Accumulator::new(t, None, None);
-        a.tick(0.0, None);
+        a.tick(0.0, None, None);
         a.finish(t + chrono::Duration::seconds(60)).unwrap()
     }
 

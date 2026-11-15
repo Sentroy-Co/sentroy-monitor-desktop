@@ -62,3 +62,62 @@ pub fn computer_name() -> Option<String> {
     let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!name.is_empty()).then_some(name)
 }
+
+/// AppleScript that returns the active tab's URL, for browsers that support it
+/// (Firefox has no AppleScript for this).
+fn url_script(bundle_id: &str) -> Option<&'static str> {
+    match bundle_id {
+        "com.apple.Safari" | "com.apple.SafariTechnologyPreview" | "com.kagi.kagimacOS" => Some("URL of front document"),
+        "com.google.Chrome"
+        | "com.google.Chrome.beta"
+        | "com.google.Chrome.canary"
+        | "com.microsoft.edgemac"
+        | "com.brave.Browser"
+        | "company.thebrowser.Browser"
+        | "com.vivaldi.Vivaldi"
+        | "com.operasoftware.Opera"
+        | "org.chromium.Chromium" => Some("URL of active tab of front window"),
+        _ => None,
+    }
+}
+
+/// The app in front and its active tab's URL when that app is a known browser.
+/// Asks the browser through Apple Events (one Automation prompt per browser).
+pub fn active_browser_url() -> Option<(String, String)> {
+    use objc2_app_kit::NSWorkspace;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    #[allow(unused_unsafe)]
+    let (name, bundle) = unsafe {
+        let app = NSWorkspace::sharedWorkspace().frontmostApplication()?;
+        (app.localizedName()?.to_string(), app.bundleIdentifier()?.to_string())
+    };
+    let property = url_script(&bundle)?;
+    // `application id` targets the running instance; it is in front, so nothing launches.
+    let script = format!("tell application id \"{bundle}\" to get {property}");
+    let mut child = Command::new("/usr/bin/osascript")
+        .args(["-e", &script])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = Instant::now() + Duration::from_millis(1500);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(Some(_)) | Err(_) => return None, // denied or no window
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    let mut out = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take()?, &mut out).ok()?;
+    let url = out.trim().to_string();
+    (!url.is_empty()).then_some((name, url))
+}

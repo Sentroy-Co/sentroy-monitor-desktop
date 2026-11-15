@@ -4,6 +4,8 @@
 //! * `seconds_since_input()` — seconds since the last keyboard/mouse event,
 //!   `None` when the platform cannot tell (e.g. a pure Wayland session);
 //! * `frontmost_app()` — the name of the app in front (never a window title);
+//! * `active_browser_url()` — the active tab's URL when the app in front is a
+//!   supported browser (macOS only; used for the domain, see `sites`);
 //! * `screen_capture_granted()` / `request_screen_capture()` — the macOS Screen
 //!   Recording permission (always granted elsewhere);
 //! * `capture_main_display()` — a screenshot of the primary display.
@@ -46,9 +48,12 @@ mod imp {
     pub fn computer_name() -> Option<String> {
         None
     }
+    pub fn active_browser_url() -> Option<(String, String)> {
+        None
+    }
 }
 
-pub use imp::{computer_name, frontmost_app, request_screen_capture, screen_capture_granted, screen_capture_supported, seconds_since_input};
+pub use imp::{active_browser_url, computer_name, frontmost_app, request_screen_capture, screen_capture_granted, screen_capture_supported, seconds_since_input};
 
 /// Where the user grants a permission in the system settings, if anywhere.
 pub fn permission_settings_url(kind: &str) -> Option<&'static str> {

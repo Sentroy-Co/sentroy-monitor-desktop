@@ -79,11 +79,13 @@ impl Default for ScreenshotPolicy {
 pub struct Policy {
     pub screenshots: ScreenshotPolicy,
     pub idle_stop_minutes: u32,
+    /// Record the domain of the browser tab in front (off unless the company turns it on).
+    pub sites: bool,
 }
 
 impl Default for Policy {
     fn default() -> Self {
-        Policy { screenshots: ScreenshotPolicy::default(), idle_stop_minutes: 30 }
+        Policy { screenshots: ScreenshotPolicy::default(), idle_stop_minutes: 30, sites: false }
     }
 }
 
@@ -309,6 +311,9 @@ mod tests {
         assert_eq!((p.screenshots.per_ten_minutes, p.idle_stop_minutes), (3, 5));
         let partial: Policy = serde_json::from_str(r#"{"screenshots":{"enabled":true}}"#).unwrap();
         assert_eq!((partial.screenshots.per_ten_minutes, partial.idle_stop_minutes), (1, 30));
+        assert!(!partial.sites, "website tracking stays off unless the server says so");
+        let sites: Policy = serde_json::from_str(r#"{"sites":true}"#).unwrap();
+        assert!(sites.sites);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 //! Activity sampling. Privacy by construction: we only ask the OS (see `os`)
 //! how long ago the last keyboard/mouse event happened and which app is in
-//! front. No key codes, window titles or URLs are ever read, so no
-//! Accessibility / Input Monitoring permission is needed.
+//! front. No key codes or window titles are ever read, so no Accessibility /
+//! Input Monitoring permission is needed. Websites are recorded only when the
+//! company turns them on, and then only as a domain (see `sites`).
 
 use std::collections::HashMap;
 
@@ -28,6 +29,13 @@ pub struct AppUsage {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct SiteUsage {
+    pub domain: String,
+    pub seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Sample {
     pub id: String,
     pub start: DateTime<Utc>,
@@ -37,6 +45,8 @@ pub struct Sample {
     pub active_seconds: u32,
     pub idle_seconds: u32,
     pub apps: Vec<AppUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sites: Vec<SiteUsage>,
 }
 
 /// Accumulates one-second ticks into a sample.
@@ -49,15 +59,17 @@ pub struct Accumulator {
     active: u32,
     idle: u32,
     apps: HashMap<String, u32>,
+    sites: HashMap<String, u32>,
 }
 
 impl Accumulator {
     pub fn new(start: DateTime<Utc>, project_id: Option<String>, task_id: Option<String>) -> Self {
-        Accumulator { start, project_id, task_id, ticks: 0, active: 0, idle: 0, apps: HashMap::new() }
+        Accumulator { start, project_id, task_id, ticks: 0, active: 0, idle: 0, apps: HashMap::new(), sites: HashMap::new() }
     }
 
-    /// One second of tracking. `since_input` is seconds since the last input event.
-    pub fn tick(&mut self, since_input: f64, front_app: Option<&str>) {
+    /// One second of tracking. `since_input` is seconds since the last input event;
+    /// `site` is the domain of the browser tab in front, when websites are recorded.
+    pub fn tick(&mut self, since_input: f64, front_app: Option<&str>, site: Option<&str>) {
         self.ticks += 1;
         if since_input >= IDLE_THRESHOLD_SECS {
             self.idle += 1;
@@ -71,6 +83,9 @@ impl Accumulator {
             if !name.is_empty() {
                 *self.apps.entry(name).or_insert(0) += 1;
             }
+        }
+        if let Some(domain) = site {
+            *self.sites.entry(domain.to_string()).or_insert(0) += 1;
         }
     }
 
@@ -97,6 +112,10 @@ impl Accumulator {
             self.apps.into_iter().map(|(name, seconds)| AppUsage { name, seconds: seconds.min(span) }).collect();
         apps.sort_by(|a, b| b.seconds.cmp(&a.seconds).then_with(|| a.name.cmp(&b.name)));
         apps.truncate(20);
+        let mut sites: Vec<SiteUsage> =
+            self.sites.into_iter().map(|(domain, seconds)| SiteUsage { domain, seconds: seconds.min(span) }).collect();
+        sites.sort_by(|a, b| b.seconds.cmp(&a.seconds).then_with(|| a.domain.cmp(&b.domain)));
+        sites.truncate(20);
         Some(Sample {
             id: uuid::Uuid::new_v4().simple().to_string(),
             start: self.start,
@@ -106,6 +125,7 @@ impl Accumulator {
             active_seconds: active,
             idle_seconds: idle,
             apps,
+            sites,
         })
     }
 }
@@ -134,13 +154,13 @@ mod tests {
     fn counts_active_idle_and_apps() {
         let mut a = Accumulator::new(t0(), Some("p".into()), None);
         for _ in 0..30 {
-            a.tick(0.2, Some("Cursor"));
+            a.tick(0.2, Some("Cursor"), None);
         }
         for _ in 0..20 {
-            a.tick(10.0, Some("Safari")); // passive reading: not active, still Safari time
+            a.tick(10.0, Some("Safari"), None); // passive reading: not active, still Safari time
         }
         for _ in 0..10 {
-            a.tick(400.0, Some("Safari")); // idle
+            a.tick(400.0, Some("Safari"), None); // idle
         }
         let s = a.finish(t0() + chrono::Duration::seconds(60)).unwrap();
         assert_eq!((s.active_seconds, s.idle_seconds), (30, 10));
@@ -153,7 +173,7 @@ mod tests {
     fn clamps_to_wall_clock_after_sleep() {
         let mut a = Accumulator::new(t0(), None, None);
         for _ in 0..100 {
-            a.tick(0.0, Some("X"));
+            a.tick(0.0, Some("X"), None);
         }
         let s = a.finish(t0() + chrono::Duration::seconds(40)).unwrap();
         assert_eq!(s.active_seconds, 40);
@@ -161,7 +181,7 @@ mod tests {
         assert_eq!((s.end - s.start).num_seconds(), 40);
         // A huge gap is capped to the server's 15-minute limit.
         let mut b = Accumulator::new(t0(), None, None);
-        b.tick(0.0, None);
+        b.tick(0.0, None, None);
         let s = b.finish(t0() + chrono::Duration::hours(3)).unwrap();
         assert_eq!((s.end - s.start).num_seconds(), 900);
     }
@@ -170,14 +190,14 @@ mod tests {
     fn empty_accumulator_yields_nothing_and_strips_control_chars() {
         assert!(Accumulator::new(t0(), None, None).finish(t0()).is_none());
         let mut a = Accumulator::new(t0(), None, None);
-        a.tick(0.0, Some("Ev\u{7}il\n"));
+        a.tick(0.0, Some("Ev\u{7}il\n"), None);
         assert_eq!(a.finish(t0() + chrono::Duration::seconds(1)).unwrap().apps[0].name, "Evil");
     }
 
     #[test]
     fn serialises_like_the_server_expects() {
         let mut a = Accumulator::new(t0(), None, Some("t".into()));
-        a.tick(0.0, Some("A"));
+        a.tick(0.0, Some("A"), None);
         let v = serde_json::to_value(a.finish(t0() + chrono::Duration::seconds(60)).unwrap()).unwrap();
         assert_eq!(v["start"], "2026-11-11T09:00:00Z");
         assert_eq!(v["taskId"], "t");
@@ -190,5 +210,27 @@ mod tests {
         assert_eq!(activity_percent(30, 60, 0), 50);
         assert_eq!(activity_percent(30, 60, 30), 100);
         assert_eq!(activity_percent(0, 0, 0), 0);
+    }
+
+    #[test]
+    fn counts_sites_and_omits_them_when_off() {
+        let mut a = Accumulator::new(t0(), None, None);
+        for _ in 0..20 {
+            a.tick(0.2, Some("Safari"), Some("github.com"));
+        }
+        for _ in 0..10 {
+            a.tick(0.2, Some("Safari"), Some("figma.com"));
+        }
+        a.tick(400.0, Some("Safari"), Some("figma.com")); // idle: no site time
+        let s = a.finish(t0() + chrono::Duration::seconds(31)).unwrap();
+        assert_eq!(s.sites, vec![
+            SiteUsage { domain: "github.com".into(), seconds: 20 },
+            SiteUsage { domain: "figma.com".into(), seconds: 10 },
+        ]);
+
+        let mut b = Accumulator::new(t0(), None, None);
+        b.tick(0.2, Some("Safari"), None);
+        let json = serde_json::to_value(b.finish(t0() + chrono::Duration::seconds(1)).unwrap()).unwrap();
+        assert!(json.get("sites").is_none(), "nothing is sent while websites are off");
     }
 }
