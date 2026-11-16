@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::activity::Sample;
 use crate::api::Policy;
+use crate::sessions::SessionEvent;
 
 pub const DEFAULT_SERVER: &str = "https://monitor.sentroy.com";
 const KEYCHAIN_SERVICE: &str = "com.sentroy.monitor";
@@ -145,6 +146,20 @@ impl Store {
         }
     }
 
+    /// Queued clock-in/out events (see `sessions`).
+    pub fn load_sessions(&self) -> Vec<SessionEvent> {
+        fs::read(self.dir.join("sessions.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_sessions(&self, q: &[SessionEvent]) {
+        if let Ok(b) = serde_json::to_vec(q) {
+            let _ = write_atomic(&self.dir.join("sessions.json"), &b);
+        }
+    }
+
     fn entry(server: &str) -> Option<keyring::Entry> {
         keyring::Entry::new(KEYCHAIN_SERVICE, server).ok()
     }
@@ -199,6 +214,13 @@ mod tests {
         let q = vec![sample(0), sample(1)];
         store.save_queue(&q);
         assert_eq!(store.load_queue(), q);
+        assert!(store.load_sessions().is_empty());
+        let events = vec![
+            SessionEvent::start(q[0].start),
+            SessionEvent::stop(q[1].end, crate::sessions::StopReason::EndOfDay, Some("done")),
+        ];
+        store.save_sessions(&events);
+        assert_eq!(Store::new(dir.clone()).load_sessions(), events, "survives a restart");
         let _ = fs::remove_dir_all(dir);
     }
 

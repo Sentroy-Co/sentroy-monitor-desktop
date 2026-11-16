@@ -297,6 +297,23 @@ mod tests {
     }
 
     #[test]
+    fn queue_survives_a_restart_and_lists_oldest_first() {
+        // Captured while offline, saved out of order: a new queue on the same
+        // directory (the next app start) sees them all, oldest first.
+        let dir = std::env::temp_dir().join(format!("sm-shots-{}", uuid::Uuid::new_v4()));
+        let t = Utc.with_ymd_and_hms(2026, 11, 16, 9, 0, 0).unwrap();
+        let q = ShotQueue::new(dir.clone());
+        for m in [20, 0, 10] {
+            q.save(b"jpeg", t + chrono::Duration::minutes(m), 2, 1).unwrap();
+        }
+        drop(q);
+        let q = ShotQueue::new(dir.clone());
+        let times: Vec<_> = q.list().iter().map(|s| (s.taken_at - t).num_minutes()).collect();
+        assert_eq!(times, vec![0, 10, 20]);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn ignores_foreign_files() {
         assert!(parse(Path::new("/x/notes.txt")).is_none());
         assert!(parse(Path::new("/x/a_b_c.jpg")).is_none());
