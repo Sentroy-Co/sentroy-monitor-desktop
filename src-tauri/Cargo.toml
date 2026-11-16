@@ -1,6 +1,6 @@
 [package]
 name = "sentroy-monitor"
-version = "0.3.0"
+version = "0.4.0"
 description = "Sentroy Monitor desktop agent: time tracking with privacy-first activity measurement."
 authors = ["Sentroy"]
 license = "FSL-1.1-ALv2"
