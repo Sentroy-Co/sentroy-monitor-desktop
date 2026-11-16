@@ -1,5 +1,6 @@
 //! Screenshots, only when the company enabled them in the policy and only while
-//! the timer runs. Each capture is downscaled, blurred on this machine when the
+//! the timer runs. With several displays, all of them are put into one image
+//! (`compose`). Each capture is downscaled, blurred on this machine when the
 //! policy asks for it (the unblurred image never leaves memory), encoded as
 //! JPEG and put into an on-disk queue that the uploader drains.
 
@@ -20,6 +21,10 @@ pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_QUEUED: usize = 200;
 /// Length of a screenshot window in tracked seconds.
 pub const WINDOW_SECS: u64 = 600;
+/// Space between displays in a composed screenshot.
+const GAP: u32 = 8;
+/// Background of a composed screenshot (gaps, letterboxing, empty cells).
+const BACKDROP: image::Rgba<u8> = image::Rgba([24, 24, 27, 255]);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Shot {
@@ -59,6 +64,43 @@ pub fn process(img: RgbaImage, blur: bool) -> Result<(Vec<u8>, u32, u32), String
         }
         quality -= 15;
     }
+}
+
+/// Puts the captures of all displays (in display order) into one image: one
+/// display as is, two side by side, three or more in a two-column grid, row by
+/// row. Every display gets a cell of the same size and is fitted into it
+/// keeping its aspect ratio (letterboxed on a dark backdrop). Cells are sized
+/// so the composite is about `MAX_WIDTH` wide, so `process` barely rescales it.
+pub fn compose(mut images: Vec<RgbaImage>) -> RgbaImage {
+    images.retain(|i| i.width() > 0 && i.height() > 0);
+    match images.len() {
+        0 => return RgbaImage::from_pixel(1, 1, BACKDROP),
+        1 => return images.pop().expect("one image"),
+        _ => {}
+    }
+    let n = images.len() as u32;
+    let cols = 2;
+    let rows = n.div_ceil(cols);
+    let widest = images.iter().map(|i| i.width()).max().unwrap_or(1);
+    let cell_w = ((MAX_WIDTH - GAP * (cols - 1)) / cols).min(widest).max(1);
+    // Tall enough for the tallest aspect ratio, so no display is shrunk more than needed.
+    let ratio = images.iter().map(|i| i.height() as f64 / i.width() as f64).fold(0.0, f64::max);
+    let cell_h = ((cell_w as f64 * ratio).round() as u32).max(1);
+    let mut out = RgbaImage::from_pixel(cols * cell_w + GAP * (cols - 1), rows * cell_h + GAP * (rows - 1), BACKDROP);
+    for (k, img) in images.iter().enumerate() {
+        let (col, row) = (k as u32 % cols, k as u32 / cols);
+        let scale = (cell_w as f64 / img.width() as f64).min(cell_h as f64 / img.height() as f64);
+        let w = ((img.width() as f64 * scale).round() as u32).clamp(1, cell_w);
+        let h = ((img.height() as f64 * scale).round() as u32).clamp(1, cell_h);
+        let x = col * (cell_w + GAP) + (cell_w - w) / 2;
+        let y = row * (cell_h + GAP) + (cell_h - h) / 2;
+        if (w, h) == img.dimensions() {
+            imageops::overlay(&mut out, img, x as i64, y as i64);
+        } else {
+            imageops::overlay(&mut out, &imageops::resize(img, w, h, FilterType::Triangle), x as i64, y as i64);
+        }
+    }
+    out
 }
 
 /// `<id>_<takenAtMillis>_<width>x<height>.jpg`
@@ -172,6 +214,67 @@ mod tests {
         let (a, b) = (img.get_pixel(100, 100), img.get_pixel(101, 100));
         let diff: i32 = (0..3).map(|i| (a[i] as i32 - b[i] as i32).abs()).sum();
         assert!(diff < 12, "neighbouring pixels differ by {diff}");
+    }
+
+    fn solid(w: u32, h: u32, c: [u8; 3]) -> RgbaImage {
+        RgbaImage::from_pixel(w, h, image::Rgba([c[0], c[1], c[2], 255]))
+    }
+
+    const RED: [u8; 3] = [220, 20, 20];
+    const GREEN: [u8; 3] = [20, 200, 20];
+    const BLUE: [u8; 3] = [20, 20, 220];
+
+    fn rgb(img: &RgbaImage, x: u32, y: u32) -> [u8; 3] {
+        let p = img.get_pixel(x, y);
+        [p[0], p[1], p[2]]
+    }
+
+    #[test]
+    fn compose_keeps_a_single_display_as_is() {
+        let img = noisy(1920, 1080);
+        assert_eq!(compose(vec![img.clone()]), img);
+        assert_eq!(compose(Vec::new()).dimensions(), (1, 1));
+    }
+
+    #[test]
+    fn compose_puts_two_displays_side_by_side() {
+        // A wide 2560x1440 display and a portrait 1080x1920 one.
+        let out = compose(vec![solid(2560, 1440, RED), solid(1080, 1920, GREEN)]);
+        let cell_w = (MAX_WIDTH - GAP) / 2;
+        let cell_h = (cell_w as f64 * 1920.0 / 1080.0).round() as u32;
+        assert_eq!(out.dimensions(), (2 * cell_w + GAP, cell_h));
+        assert!(out.width() <= MAX_WIDTH);
+        // Each display sits in the middle of its own cell.
+        assert_eq!(rgb(&out, cell_w / 2, cell_h / 2), RED);
+        assert_eq!(rgb(&out, cell_w + GAP + cell_w / 2, cell_h / 2), GREEN);
+        // The landscape display is letterboxed: above it is the backdrop.
+        assert_eq!(rgb(&out, cell_w / 2, 2), [BACKDROP[0], BACKDROP[1], BACKDROP[2]]);
+        // The gap between the cells too.
+        assert_eq!(rgb(&out, cell_w + GAP / 2, cell_h / 2), [BACKDROP[0], BACKDROP[1], BACKDROP[2]]);
+    }
+
+    #[test]
+    fn compose_puts_three_displays_in_a_two_column_grid() {
+        let out = compose(vec![solid(1920, 1080, RED), solid(1280, 1024, GREEN), solid(800, 600, BLUE)]);
+        let cell_w = (MAX_WIDTH - GAP) / 2;
+        let cell_h = (cell_w as f64 * 1024.0 / 1280.0).round() as u32;
+        assert_eq!(out.dimensions(), (2 * cell_w + GAP, 2 * cell_h + GAP));
+        assert_eq!(rgb(&out, cell_w / 2, cell_h / 2), RED);
+        assert_eq!(rgb(&out, cell_w + GAP + cell_w / 2, cell_h / 2), GREEN);
+        assert_eq!(rgb(&out, cell_w / 2, cell_h + GAP + cell_h / 2), BLUE);
+        // The fourth cell stays empty.
+        assert_eq!(rgb(&out, cell_w + GAP + cell_w / 2, cell_h + GAP + cell_h / 2), [BACKDROP[0], BACKDROP[1], BACKDROP[2]]);
+        // And the composite still goes through the normal size limits.
+        let (jpeg, w, _) = process(out, true).unwrap();
+        assert!(w <= MAX_WIDTH && jpeg.len() <= MAX_BYTES);
+    }
+
+    #[test]
+    fn compose_cells_are_never_wider_than_the_widest_display() {
+        let out = compose(vec![solid(400, 300, RED), solid(300, 300, GREEN)]);
+        assert_eq!(out.dimensions(), (2 * 400 + GAP, 400));
+        assert_eq!(rgb(&out, 200, 200), RED);
+        assert_eq!(rgb(&out, 400 + GAP + 200, 200), GREEN);
     }
 
     #[test]

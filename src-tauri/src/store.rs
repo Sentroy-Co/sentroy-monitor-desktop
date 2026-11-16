@@ -20,16 +20,14 @@ pub const MAX_QUEUE: usize = 5000;
 pub struct Settings {
     pub server_url: String,
     pub consent_accepted: bool,
-    pub project_id: Option<String>,
-    pub task_id: Option<String>,
     pub user_name: Option<String>,
     pub company_name: Option<String>,
     pub company_slug: Option<String>,
     /// Local `YYYY-MM-DD` and the seconds tracked on it, for the "today" counter.
     pub today: Option<String>,
     pub today_seconds: u64,
-    /// Seconds per task tracked on `today`, from finished samples.
-    pub today_tasks: Vec<TodayTask>,
+    /// Seconds per app tracked on `today`, from finished samples.
+    pub today_apps: Vec<TodayApp>,
     /// Activity per wall-clock ten-minute slot, most recent last.
     pub bars: Vec<Bar>,
     /// Last policy received from the server (used until the next refresh).
@@ -38,10 +36,8 @@ pub struct Settings {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct TodayTask {
-    pub task_id: Option<String>,
-    pub project_id: Option<String>,
-    pub title: Option<String>,
+pub struct TodayApp {
+    pub name: String,
     pub seconds: u64,
 }
 
@@ -64,23 +60,15 @@ impl Settings {
         if self.today.as_deref() != Some(day) {
             self.today = Some(day.to_string());
             self.today_seconds = 0;
-            self.today_tasks.clear();
+            self.today_apps.clear();
         }
     }
 
-    /// Adds finished-sample seconds to a task's total for today.
-    pub fn add_task_time(&mut self, task_id: Option<String>, project_id: Option<String>, title: Option<String>, seconds: u64) {
-        match self.today_tasks.iter_mut().find(|t| t.task_id == task_id) {
-            Some(t) => {
-                t.seconds += seconds;
-                if title.is_some() {
-                    t.title = title;
-                }
-                if project_id.is_some() {
-                    t.project_id = project_id;
-                }
-            }
-            None => self.today_tasks.push(TodayTask { task_id, project_id, title, seconds }),
+    /// Adds finished-sample seconds to an app's total for today.
+    pub fn add_app_time(&mut self, name: &str, seconds: u64) {
+        match self.today_apps.iter_mut().find(|a| a.name == name) {
+            Some(a) => a.seconds += seconds,
+            None => self.today_apps.push(TodayApp { name: name.to_string(), seconds }),
         }
     }
 
@@ -102,14 +90,12 @@ impl Default for Settings {
         Settings {
             server_url: DEFAULT_SERVER.into(),
             consent_accepted: false,
-            project_id: None,
-            task_id: None,
             user_name: None,
             company_name: None,
             company_slug: None,
             today: None,
             today_seconds: 0,
-            today_tasks: Vec::new(),
+            today_apps: Vec::new(),
             bars: Vec::new(),
             policy: Policy::default(),
         }
@@ -195,7 +181,7 @@ mod tests {
 
     fn sample(i: i64) -> Sample {
         let t = Utc.with_ymd_and_hms(2026, 11, 11, 9, 0, 0).unwrap() + chrono::Duration::minutes(i);
-        let mut a = Accumulator::new(t, None, None);
+        let mut a = Accumulator::new(t);
         a.tick(0.0, None, None);
         a.finish(t + chrono::Duration::seconds(60)).unwrap()
     }
@@ -205,11 +191,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sm-test-{}", uuid::Uuid::new_v4()));
         let store = Store::new(dir.clone());
         assert_eq!(store.load_settings().server_url, DEFAULT_SERVER);
-        let s = Settings { consent_accepted: true, project_id: Some("p".into()), ..Default::default() };
+        let s = Settings { consent_accepted: true, today_apps: vec![TodayApp { name: "Figma".into(), seconds: 60 }], ..Default::default() };
         store.save_settings(&s);
         let back = store.load_settings();
         assert!(back.consent_accepted);
-        assert_eq!(back.project_id.as_deref(), Some("p"));
+        assert_eq!(back.today_apps, s.today_apps);
         let q = vec![sample(0), sample(1)];
         store.save_queue(&q);
         assert_eq!(store.load_queue(), q);
@@ -224,20 +210,27 @@ mod tests {
     }
 
     #[test]
-    fn today_tasks_accumulate_and_reset_on_a_new_day() {
+    fn settings_from_before_projects_were_removed_still_load() {
+        let old = r#"{"serverUrl":"https://x.test","consentAccepted":true,"projectId":"p","taskId":"t",
+            "today":"2026-11-11","todaySeconds":90,"todayTasks":[{"taskId":"t","title":"Design","seconds":90}]}"#;
+        let s: Settings = serde_json::from_str(old).unwrap();
+        assert!(s.consent_accepted);
+        assert_eq!((s.server_url.as_str(), s.today_seconds), ("https://x.test", 90));
+        assert!(s.today_apps.is_empty());
+    }
+
+    #[test]
+    fn today_apps_accumulate_and_reset_on_a_new_day() {
         let mut s = Settings::default();
         s.roll_day("2026-11-11");
-        s.add_task_time(Some("t1".into()), None, Some("Design".into()), 60);
-        s.add_task_time(None, None, None, 30);
-        s.add_task_time(Some("t1".into()), Some("p".into()), None, 45);
-        assert_eq!(s.today_tasks.len(), 2);
-        assert_eq!(s.today_tasks[0].seconds, 105);
-        assert_eq!(s.today_tasks[0].title.as_deref(), Some("Design"));
-        assert_eq!(s.today_tasks[0].project_id.as_deref(), Some("p"));
+        s.add_app_time("Figma", 60);
+        s.add_app_time("Safari", 30);
+        s.add_app_time("Figma", 45);
+        assert_eq!(s.today_apps, vec![TodayApp { name: "Figma".into(), seconds: 105 }, TodayApp { name: "Safari".into(), seconds: 30 }]);
         s.roll_day("2026-11-11");
-        assert_eq!(s.today_tasks.len(), 2);
+        assert_eq!(s.today_apps.len(), 2);
         s.roll_day("2026-11-12");
-        assert!(s.today_tasks.is_empty());
+        assert!(s.today_apps.is_empty());
     }
 
     #[test]

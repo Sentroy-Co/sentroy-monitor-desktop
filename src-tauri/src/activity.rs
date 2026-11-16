@@ -40,8 +40,6 @@ pub struct Sample {
     pub id: String,
     pub start: DateTime<Utc>,
     pub end: DateTime<Utc>,
-    pub project_id: Option<String>,
-    pub task_id: Option<String>,
     pub active_seconds: u32,
     pub idle_seconds: u32,
     pub apps: Vec<AppUsage>,
@@ -53,8 +51,6 @@ pub struct Sample {
 #[derive(Debug)]
 pub struct Accumulator {
     start: DateTime<Utc>,
-    project_id: Option<String>,
-    task_id: Option<String>,
     ticks: u32,
     active: u32,
     idle: u32,
@@ -63,8 +59,8 @@ pub struct Accumulator {
 }
 
 impl Accumulator {
-    pub fn new(start: DateTime<Utc>, project_id: Option<String>, task_id: Option<String>) -> Self {
-        Accumulator { start, project_id, task_id, ticks: 0, active: 0, idle: 0, apps: HashMap::new(), sites: HashMap::new() }
+    pub fn new(start: DateTime<Utc>) -> Self {
+        Accumulator { start, ticks: 0, active: 0, idle: 0, apps: HashMap::new(), sites: HashMap::new() }
     }
 
     /// One second of tracking. `since_input` is seconds since the last input event;
@@ -93,8 +89,9 @@ impl Accumulator {
         self.ticks
     }
 
-    pub fn task_id(&self) -> Option<&str> {
-        self.task_id.as_deref()
+    /// Seconds per app name so far (for the live "today by app" list).
+    pub fn app_seconds(&self) -> impl Iterator<Item = (&str, u32)> {
+        self.apps.iter().map(|(name, &secs)| (name.as_str(), secs))
     }
 
     /// Closes the sample at `end`. Counts are clamped to the wall-clock span so a
@@ -120,8 +117,6 @@ impl Accumulator {
             id: uuid::Uuid::new_v4().simple().to_string(),
             start: self.start,
             end,
-            project_id: self.project_id,
-            task_id: self.task_id,
             active_seconds: active,
             idle_seconds: idle,
             apps,
@@ -152,7 +147,7 @@ mod tests {
 
     #[test]
     fn counts_active_idle_and_apps() {
-        let mut a = Accumulator::new(t0(), Some("p".into()), None);
+        let mut a = Accumulator::new(t0());
         for _ in 0..30 {
             a.tick(0.2, Some("Cursor"), None);
         }
@@ -165,13 +160,12 @@ mod tests {
         let s = a.finish(t0() + chrono::Duration::seconds(60)).unwrap();
         assert_eq!((s.active_seconds, s.idle_seconds), (30, 10));
         assert_eq!(s.apps, vec![AppUsage { name: "Cursor".into(), seconds: 30 }, AppUsage { name: "Safari".into(), seconds: 20 }]);
-        assert_eq!(s.project_id.as_deref(), Some("p"));
         assert_eq!(s.id.len(), 32);
     }
 
     #[test]
     fn clamps_to_wall_clock_after_sleep() {
-        let mut a = Accumulator::new(t0(), None, None);
+        let mut a = Accumulator::new(t0());
         for _ in 0..100 {
             a.tick(0.0, Some("X"), None);
         }
@@ -180,7 +174,7 @@ mod tests {
         assert_eq!(s.apps[0].seconds, 40);
         assert_eq!((s.end - s.start).num_seconds(), 40);
         // A huge gap is capped to the server's 15-minute limit.
-        let mut b = Accumulator::new(t0(), None, None);
+        let mut b = Accumulator::new(t0());
         b.tick(0.0, None, None);
         let s = b.finish(t0() + chrono::Duration::hours(3)).unwrap();
         assert_eq!((s.end - s.start).num_seconds(), 900);
@@ -188,21 +182,20 @@ mod tests {
 
     #[test]
     fn empty_accumulator_yields_nothing_and_strips_control_chars() {
-        assert!(Accumulator::new(t0(), None, None).finish(t0()).is_none());
-        let mut a = Accumulator::new(t0(), None, None);
+        assert!(Accumulator::new(t0()).finish(t0()).is_none());
+        let mut a = Accumulator::new(t0());
         a.tick(0.0, Some("Ev\u{7}il\n"), None);
         assert_eq!(a.finish(t0() + chrono::Duration::seconds(1)).unwrap().apps[0].name, "Evil");
     }
 
     #[test]
     fn serialises_like_the_server_expects() {
-        let mut a = Accumulator::new(t0(), None, Some("t".into()));
+        let mut a = Accumulator::new(t0());
         a.tick(0.0, Some("A"), None);
         let v = serde_json::to_value(a.finish(t0() + chrono::Duration::seconds(60)).unwrap()).unwrap();
         assert_eq!(v["start"], "2026-11-11T09:00:00Z");
-        assert_eq!(v["taskId"], "t");
         assert_eq!(v["activeSeconds"], 1);
-        assert!(v.get("projectId").is_some());
+        assert!(v.get("projectId").is_none() && v.get("taskId").is_none());
     }
 
     #[test]
@@ -214,7 +207,7 @@ mod tests {
 
     #[test]
     fn counts_sites_and_omits_them_when_off() {
-        let mut a = Accumulator::new(t0(), None, None);
+        let mut a = Accumulator::new(t0());
         for _ in 0..20 {
             a.tick(0.2, Some("Safari"), Some("github.com"));
         }
@@ -228,7 +221,7 @@ mod tests {
             SiteUsage { domain: "figma.com".into(), seconds: 10 },
         ]);
 
-        let mut b = Accumulator::new(t0(), None, None);
+        let mut b = Accumulator::new(t0());
         b.tick(0.2, Some("Safari"), None);
         let json = serde_json::to_value(b.finish(t0() + chrono::Duration::seconds(1)).unwrap()).unwrap();
         assert!(json.get("sites").is_none(), "nothing is sent while websites are off");

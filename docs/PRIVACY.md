@@ -12,8 +12,8 @@ While **you** have started the timer, once a second the agent asks the OS two th
 | Frontmost app | `NSWorkspace` app name | foreground process exe name | `_NET_ACTIVE_WINDOW` → process name | seconds per app name |
 
 It never reads key codes or window titles, so it needs **no** Accessibility or Input Monitoring
-permission. Every minute becomes one sample (`{start, end, projectId, taskId, activeSeconds,
-idleSeconds, apps, sites?}`), queued on disk and uploaded every 30 s. The server de-duplicates by sample id,
+permission. Every minute becomes one sample (`{id, start, end, activeSeconds, idleSeconds, apps,
+sites?}`), queued on disk and uploaded every 30 s. The server de-duplicates by sample id,
 so retries never double count. After the company's idle limit (`policy.idleStopMinutes`, default 30
 minutes) without any input the timer stops by itself.
 
@@ -41,8 +41,9 @@ The company decides in Sentroy Monitor whether this agent takes screenshots (`po
 `GET /api/agent/me`, re-read on start, on refresh and every 15 minutes). When they are **off** (the
 default) the agent never captures the screen. When they are **on**:
 
-- only while the timer runs, `perTenMinutes` (1–3) screenshots of the main display at random moments
-  of each ten minutes of tracking;
+- only while the timer runs, `perTenMinutes` (1–3) screenshots at random moments of each ten minutes
+  of tracking. With several displays, each screenshot shows all of them in one image: two side by
+  side, three or more in a two-column grid (the primary display first), each scaled to the same cell;
 - downscaled to at most 1600 px wide; if the company asked for **blur**, the image is blurred on this
   computer **before** it is written to disk or sent — the sharp image never leaves memory;
 - a visible notice ("Screenshot taken") every time, plus a system notification when the window is not

@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { LANGS, STRINGS, pickLang, translator } from "./i18n.js"
-import { activityBand, formatClock, formatHM, groupTasks, permissionsBlock, todayRows } from "./logic.js"
+import { activityBand, formatClock, formatHM, permissionsBlock, todayRows } from "./logic.js"
 
 test("every language has exactly the English keys", () => {
   const keys = Object.keys(STRINGS.en).sort()
@@ -36,16 +36,6 @@ test("formatClock", () => {
   assert.equal(formatClock(100 * 3600), "100:00:00")
 })
 
-test("groupTasks filters by project and puts mine first", () => {
-  const tasks = [
-    { id: "a", projectId: "p1", title: "A", mine: false },
-    { id: "b", projectId: "p1", title: "B", mine: true },
-    { id: "c", projectId: "p2", title: "C", mine: true },
-  ]
-  assert.deepEqual(groupTasks(tasks, "p1"), { mine: [tasks[1]], others: [tasks[0]] })
-  assert.deepEqual(groupTasks(tasks, null).mine.map((t) => t.id), ["b", "c"])
-})
-
 test("formatHM and activityBand", () => {
   assert.equal(formatHM(0), "0:00")
   assert.equal(formatHM(7 * 60 + 59), "0:07")
@@ -65,10 +55,10 @@ test("permissionsBlock only for required, missing items", () => {
 
 test("todayRows computes shares and skips empty entries", () => {
   const rows = todayRows([
-    { taskId: "a", seconds: 600 },
-    { taskId: "b", seconds: 300 },
-    { taskId: "c", seconds: 0 },
+    { name: "Figma", seconds: 600 },
+    { name: "Safari", seconds: 300 },
+    { name: "Mail", seconds: 0 },
   ])
-  assert.deepEqual(rows.map((r) => [r.taskId, r.share]), [["a", 1], ["b", 0.5]])
+  assert.deepEqual(rows.map((r) => [r.name, r.share]), [["Figma", 1], ["Safari", 0.5]])
   assert.deepEqual(todayRows(undefined), [])
 })

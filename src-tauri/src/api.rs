@@ -119,22 +119,6 @@ pub enum ShotUpload {
     Unauthorized,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Task {
-    pub id: String,
-    pub project_id: Option<String>,
-    pub title: String,
-    pub status: String,
-    pub mine: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Catalog {
-    pub projects: Vec<Named>,
-    pub tasks: Vec<Task>,
-}
-
 #[derive(Debug, Deserialize)]
 struct ErrorBody {
     error: Option<String>,
@@ -218,20 +202,6 @@ impl Api {
 
     pub fn me(&self, token: &str) -> Result<Me, ApiError> {
         Self::handle(self.http.get(self.url("/api/agent/me")).bearer_auth(token).send())
-    }
-
-    pub fn catalog(&self, token: &str) -> Result<Catalog, ApiError> {
-        Self::handle(self.http.get(self.url("/api/agent/projects")).bearer_auth(token).send())
-    }
-
-    pub fn create_task(&self, token: &str, project_id: Option<&str>, title: &str) -> Result<Task, ApiError> {
-        Self::handle(
-            self.http
-                .post(self.url("/api/agent/tasks"))
-                .bearer_auth(token)
-                .json(&json!({ "projectId": project_id, "title": title }))
-                .send(),
-        )
     }
 
     /// Uploads samples; the server de-duplicates by sample id, so retries are safe.
