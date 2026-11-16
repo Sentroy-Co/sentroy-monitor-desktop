@@ -27,9 +27,12 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 use activity::{activity_percent, Accumulator, Sample, SAMPLE_SECS};
-use api::{Api, ApiError, Catalog, DeviceStart, Policy, ScreenshotPolicy, ShotUpload};
+use api::{Api, ApiError, DeviceStart, Policy, ScreenshotPolicy, ShotUpload};
 use screenshots::{plan_offsets, ShotQueue, WINDOW_SECS};
-use store::{push_bounded, Settings, Store, TodayTask, BARS};
+use store::{push_bounded, Settings, Store, TodayApp, BARS};
+
+/// Rows in the "today by app" list.
+const TODAY_APPS: usize = 8;
 
 const UPLOAD_EVERY: Duration = Duration::from_secs(30);
 const UPLOAD_BATCH: usize = 200;
@@ -101,7 +104,6 @@ struct Inner {
     settings: Settings,
     token: Option<String>,
     queue: Vec<Sample>,
-    catalog: Option<Catalog>,
     tracking: Option<Tracking>,
     login: Option<DeviceStart>,
     online: bool,
@@ -147,13 +149,10 @@ struct Snapshot {
     user_name: Option<String>,
     company_name: Option<String>,
     login: Option<DeviceStart>,
-    catalog: Option<Catalog>,
-    project_id: Option<String>,
-    task_id: Option<String>,
     tracking: bool,
     session_seconds: u64,
     today_seconds: u64,
-    today_tasks: Vec<TodayTask>,
+    today_apps: Vec<TodayApp>,
     bars: Vec<BarView>,
     activity_percent: Option<u32>,
     queued: usize,
@@ -174,30 +173,20 @@ fn slot_of(t: DateTime<Utc>) -> i64 {
     t.timestamp().div_euclid(600)
 }
 
-fn task_title(catalog: Option<&Catalog>, task_id: Option<&str>) -> Option<String> {
-    let id = task_id?;
-    catalog?.tasks.iter().find(|t| t.id == id).map(|t| t.title.clone())
-}
-
-/// Today's per-task totals, including the running (not yet finished) sample.
-fn today_tasks(i: &Inner, is_today: bool) -> Vec<TodayTask> {
-    let mut list: Vec<TodayTask> = if is_today { i.settings.today_tasks.clone() } else { Vec::new() };
+/// Today's per-app totals, including the running (not yet finished) sample;
+/// the largest first, at most `TODAY_APPS`.
+fn today_apps(i: &Inner, is_today: bool) -> Vec<TodayApp> {
+    let mut list: Vec<TodayApp> = if is_today { i.settings.today_apps.clone() } else { Vec::new() };
     if let Some(t) = &i.tracking {
-        let task_id = t.acc.task_id().map(str::to_string);
-        let secs = t.acc.tracked_seconds() as u64;
-        if secs > 0 {
-            match list.iter_mut().find(|x| x.task_id == task_id) {
-                Some(x) => x.seconds += secs,
-                None => list.push(TodayTask { task_id, project_id: i.settings.project_id.clone(), title: None, seconds: secs }),
+        for (name, secs) in t.acc.app_seconds() {
+            match list.iter_mut().find(|x| x.name == name) {
+                Some(x) => x.seconds += secs as u64,
+                None => list.push(TodayApp { name: name.to_string(), seconds: secs as u64 }),
             }
         }
     }
-    for x in list.iter_mut() {
-        if let Some(title) = task_title(i.catalog.as_ref(), x.task_id.as_deref()) {
-            x.title = Some(title);
-        }
-    }
-    list.sort_by_key(|x| std::cmp::Reverse(x.seconds));
+    list.sort_by(|a, b| b.seconds.cmp(&a.seconds).then_with(|| a.name.cmp(&b.name)));
+    list.truncate(TODAY_APPS);
     list
 }
 
@@ -229,13 +218,10 @@ fn snapshot(i: &Inner) -> Snapshot {
         user_name: i.settings.user_name.clone(),
         company_name: i.settings.company_name.clone(),
         login: i.login.clone(),
-        catalog: i.catalog.clone(),
-        project_id: i.settings.project_id.clone(),
-        task_id: i.settings.task_id.clone(),
         tracking: i.tracking.is_some(),
         session_seconds: i.tracking.as_ref().map(|t| t.session_seconds).unwrap_or(0),
         today_seconds,
-        today_tasks: today_tasks(i, is_today),
+        today_apps: today_apps(i, is_today),
         bars: bar_views(i, Utc::now()),
         activity_percent: i.tracking.as_ref().map(|t| {
             let tracked = t.recent.len() as u32;
@@ -266,17 +252,15 @@ fn emit(app: &AppHandle, i: &Inner) {
     }
 }
 
-/// Closes the current sample (if any) into the queue and today's task totals.
+/// Closes the current sample (if any) into the queue and today's app totals.
 fn flush_sample(shared: &Shared, i: &mut Inner, now: DateTime<Utc>) {
     if let Some(t) = i.tracking.as_mut() {
-        let project = i.settings.project_id.clone();
-        let task = i.settings.task_id.clone();
-        let acc = std::mem::replace(&mut t.acc, Accumulator::new(now, project, task));
+        let acc = std::mem::replace(&mut t.acc, Accumulator::new(now));
         if let Some(s) = acc.finish(now) {
             i.settings.roll_day(&local_day());
-            let secs = (s.end - s.start).num_seconds().max(0) as u64;
-            let title = task_title(i.catalog.as_ref(), s.task_id.as_deref());
-            i.settings.add_task_time(s.task_id.clone(), s.project_id.clone(), title, secs);
+            for app in &s.apps {
+                i.settings.add_app_time(&app.name, app.seconds as u64);
+            }
             push_bounded(&mut i.queue, s);
             shared.store.save_queue(&i.queue);
             shared.store.save_settings(&i.settings);
@@ -297,12 +281,9 @@ fn sign_out_locked(shared: &Shared, i: &mut Inner) {
     }
     Store::delete_token(&i.settings.server_url);
     i.token = None;
-    i.catalog = None;
     i.settings.user_name = None;
     i.settings.company_name = None;
     i.settings.company_slug = None;
-    i.settings.project_id = None;
-    i.settings.task_id = None;
     i.settings.policy = Policy::default();
     shared.store.save_settings(&i.settings);
     // Screenshots belong to the signed-out account: never send them elsewhere.
@@ -378,7 +359,7 @@ fn take_screenshot(app: &AppHandle, shared: &Shared, blur: bool) {
     }
     let result = (|| {
         let taken_at = Utc::now();
-        let img = os::capture_main_display()?;
+        let img = os::capture_displays()?;
         // Blur (when asked) happens here, before anything is written to disk.
         let (jpeg, w, h) = screenshots::process(img, blur)?;
         if shared.inner.lock().unwrap().tracking.is_none() {
@@ -524,33 +505,19 @@ fn refresh_account(app: &AppHandle, shared: &Shared) {
             None => return,
         }
     };
-    let api = Api::new(&server);
-    let me = api.me(&token);
-    let catalog = api.catalog(&token);
+    let me = Api::new(&server).me(&token);
     let mut i = shared.inner.lock().unwrap();
-    match (me, catalog) {
-        (Err(ApiError::Unauthorized), _) | (_, Err(ApiError::Unauthorized)) => sign_out_locked(shared, &mut i),
-        (Ok(me), Ok(catalog)) => {
+    match me {
+        Err(ApiError::Unauthorized) => sign_out_locked(shared, &mut i),
+        Ok(me) => {
             i.settings.user_name = Some(me.user.name);
             i.settings.company_name = me.company.as_ref().map(|c| c.name.clone());
             i.settings.company_slug = me.company.map(|c| c.slug);
             i.settings.policy = me.policy.unwrap_or_default().sanitized();
-            // Drop a selection that no longer exists on the server.
-            if let Some(tid) = &i.settings.task_id {
-                if !catalog.tasks.iter().any(|t| &t.id == tid) {
-                    i.settings.task_id = None;
-                }
-            }
-            if let Some(pid) = &i.settings.project_id {
-                if !catalog.projects.iter().any(|p| &p.id == pid) {
-                    i.settings.project_id = None;
-                }
-            }
-            i.catalog = Some(catalog);
             i.online = true;
             shared.store.save_settings(&i.settings);
         }
-        _ => i.online = false,
+        Err(_) => i.online = false,
     }
     emit(app, &i);
 }
@@ -727,48 +694,6 @@ async fn refresh(app: AppHandle, state: State<'_, AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-fn select(app: AppHandle, state: State<'_, AppState>, project_id: Option<String>, task_id: Option<String>) {
-    let mut i = state.inner.lock().unwrap();
-    if i.tracking.is_some() {
-        // Close the running sample so time before the switch keeps its old task.
-        flush_sample(&state, &mut i, Utc::now());
-    }
-    i.settings.project_id = project_id.clone();
-    i.settings.task_id = task_id.clone();
-    if let Some(t) = i.tracking.as_mut() {
-        t.acc = Accumulator::new(Utc::now(), project_id, task_id);
-    }
-    state.store.save_settings(&i.settings);
-    emit(&app, &i);
-}
-
-#[tauri::command]
-async fn create_task(app: AppHandle, state: State<'_, AppState>, title: String) -> Result<(), String> {
-    let title = title.trim().to_string();
-    if title.is_empty() {
-        return Err("emptyTitle".into());
-    }
-    let shared = state.inner().clone();
-    let (server, token, project) = {
-        let i = shared.inner.lock().unwrap();
-        (i.settings.server_url.clone(), i.token.clone().ok_or("signedOut")?, i.settings.project_id.clone())
-    };
-    let task = tauri::async_runtime::spawn_blocking(move || Api::new(&server).create_task(&token, project.as_deref(), &title))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    {
-        let mut i = shared.inner.lock().unwrap();
-        if let Some(c) = i.catalog.as_mut() {
-            c.tasks.insert(0, task.clone());
-        }
-    }
-    let project_id = task.project_id.clone();
-    select(app, state, project_id, Some(task.id));
-    Ok(())
-}
-
-#[tauri::command]
 fn start_tracking(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let mut i = state.inner.lock().unwrap();
     if i.token.is_none() {
@@ -782,7 +707,7 @@ fn start_tracking(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
     }
     if i.tracking.is_none() {
         let now = Utc::now();
-        let acc = Accumulator::new(now, i.settings.project_id.clone(), i.settings.task_id.clone());
+        let acc = Accumulator::new(now);
         i.tracking = Some(Tracking::new(now, acc, &i.settings.policy.screenshots));
         i.notice = None;
     }
@@ -1003,7 +928,7 @@ pub fn run() {
             let h = app.handle().clone();
             let s = shared.clone();
             thread::spawn(move || uploader(h, s, rx));
-            // Account, catalog and policy: now and every 15 minutes.
+            // Account and policy: now and every 15 minutes.
             let h = app.handle().clone();
             let s = shared.clone();
             thread::spawn(move || loop {
@@ -1037,8 +962,6 @@ pub fn run() {
             open_login_page,
             logout,
             refresh,
-            select,
-            create_task,
             start_tracking,
             stop_tracking,
             open_dashboard,
@@ -1078,7 +1001,7 @@ mod tests {
 
     fn tracking(policy: &ScreenshotPolicy) -> Tracking {
         let now = Utc::now();
-        Tracking::new(now, Accumulator::new(now, None, None), policy)
+        Tracking::new(now, Accumulator::new(now), policy)
     }
 
     #[test]
@@ -1104,6 +1027,27 @@ mod tests {
             t.session_seconds += 1;
             assert!(!t.shot_due(&off));
         }
+    }
+
+    #[test]
+    fn today_apps_include_the_running_sample_largest_first() {
+        let mut i = Inner::default();
+        i.settings.today_apps = vec![TodayApp { name: "Figma".into(), seconds: 120 }, TodayApp { name: "Mail".into(), seconds: 30 }];
+        let mut t = tracking(&ScreenshotPolicy::default());
+        for _ in 0..50 {
+            t.acc.tick(0.0, Some("Mail"), None);
+        }
+        t.acc.tick(0.0, Some("Slack"), None);
+        i.tracking = Some(t);
+        let names = |l: Vec<TodayApp>| l.into_iter().map(|a| (a.name, a.seconds)).collect::<Vec<_>>();
+        assert_eq!(names(today_apps(&i, true)), vec![("Figma".into(), 120), ("Mail".into(), 80), ("Slack".into(), 1)]);
+        // A stored list from another day does not count.
+        assert_eq!(names(today_apps(&i, false)), vec![("Mail".into(), 50), ("Slack".into(), 1)]);
+        i.tracking = None;
+        i.settings.today_apps = (0..20).map(|k| TodayApp { name: format!("App {k}"), seconds: k }).collect();
+        let top = today_apps(&i, true);
+        assert_eq!(top.len(), TODAY_APPS);
+        assert_eq!(top[0].seconds, 19);
     }
 
     #[test]

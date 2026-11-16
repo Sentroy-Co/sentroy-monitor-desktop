@@ -8,7 +8,8 @@
 //!   supported browser (macOS only; used for the domain, see `sites`);
 //! * `screen_capture_granted()` / `request_screen_capture()` — the macOS Screen
 //!   Recording permission (always granted elsewhere);
-//! * `capture_main_display()` — a screenshot of the primary display.
+//! * `capture_displays()` — one screenshot of all displays (composed by
+//!   `screenshots::compose`).
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -65,23 +66,33 @@ pub fn permission_settings_url(kind: &str) -> Option<&'static str> {
     }
 }
 
-/// Screenshot of the primary display as RGBA.
-pub fn capture_main_display() -> Result<image::RgbaImage, String> {
+/// One screenshot of every display as RGBA: the primary display first, then
+/// the others left to right (top to bottom on ties), composed into one image
+/// by `screenshots::compose`. Falls back to the platform's single-display
+/// capture when xcap cannot capture any display.
+pub fn capture_displays() -> Result<image::RgbaImage, String> {
     if !screen_capture_supported() {
         return Err("screen capture is not supported in this session".into());
     }
     let xcap = (|| {
-        let monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
-        let main = monitors
-            .iter()
-            .find(|m| m.is_primary().unwrap_or(false))
-            .or_else(|| monitors.first())
-            .ok_or("no display")?;
-        main.capture_image().map_err(|e| e.to_string())
+        let mut monitors = xcap::Monitor::all().map_err(|e| e.to_string())?;
+        monitors.sort_by_key(|m| (!m.is_primary().unwrap_or(false), m.x().unwrap_or(0), m.y().unwrap_or(0)));
+        let mut last_err = String::from("no display");
+        let mut images = Vec::with_capacity(monitors.len());
+        for m in &monitors {
+            match m.capture_image() {
+                Ok(img) if img.width() > 0 && img.height() > 0 => images.push(img),
+                Ok(_) => last_err = "empty capture".into(),
+                Err(e) => last_err = e.to_string(),
+            }
+        }
+        if images.is_empty() {
+            return Err(last_err);
+        }
+        Ok(crate::screenshots::compose(images))
     })();
     match xcap {
-        Ok(img) if img.width() > 0 && img.height() > 0 => Ok(img),
-        Ok(_) => imp::capture_fallback(),
+        Ok(img) => Ok(img),
         Err(e) => imp::capture_fallback().map_err(|f| format!("{e}; fallback: {f}")),
     }
 }
@@ -91,8 +102,8 @@ mod tests {
     /// Needs a display (and Screen Recording on macOS): `cargo test -- --ignored`.
     #[test]
     #[ignore]
-    fn captures_the_main_display() {
-        let img = super::capture_main_display().expect("capture");
+    fn captures_all_displays() {
+        let img = super::capture_displays().expect("capture");
         assert!(img.width() > 100 && img.height() > 100);
         let (jpeg, w, _) = crate::screenshots::process(img, true).unwrap();
         assert!(w <= crate::screenshots::MAX_WIDTH && jpeg.len() < crate::screenshots::MAX_BYTES);

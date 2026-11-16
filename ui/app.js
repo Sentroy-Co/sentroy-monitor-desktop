@@ -1,5 +1,5 @@
 import { pickLang, translator } from "./i18n.js"
-import { activityBand, formatClock, formatHM, groupTasks, permissionsBlock, todayRows } from "./logic.js"
+import { activityBand, formatClock, formatHM, permissionsBlock, todayRows } from "./logic.js"
 
 const { invoke } = window.__TAURI__.core
 const { listen } = window.__TAURI__.event
@@ -12,11 +12,10 @@ if (/Mac/.test(navigator.userAgent)) document.body.classList.add("mac")
 const $ = (id) => document.getElementById(id)
 for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t)
 for (const el of document.querySelectorAll("[data-t-title]")) el.title = t(el.dataset.tTitle)
-$("new-task-title").placeholder = t("newTask")
 
 let state = null
 const timeFmt = new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit" })
-const KNOWN_ERRORS = ["offline", "invalidServer", "signOutFirst", "emptyTitle", "permissionsRequired", "updateFailed"]
+const KNOWN_ERRORS = ["offline", "invalidServer", "signOutFirst", "permissionsRequired", "updateFailed"]
 
 function notice(key) {
   if (!key) {
@@ -50,40 +49,6 @@ function el(tag, props = {}, ...children) {
   return n
 }
 
-function option(value, label, selected) {
-  return el("option", { value, textContent: label, selected })
-}
-
-let lastCatalogKey = ""
-function renderPickers(s) {
-  const catalog = s.catalog ?? { projects: [], tasks: [] }
-  const key = JSON.stringify([catalog.projects, catalog.tasks.map((x) => x.id), s.projectId, s.taskId])
-  if (key === lastCatalogKey) return
-  lastCatalogKey = key
-  $("project").replaceChildren(
-    option("", t("noProject"), !s.projectId),
-    ...catalog.projects.map((p) => option(p.id, p.name, p.id === s.projectId)),
-  )
-  const { mine, others } = groupTasks(catalog.tasks, s.projectId)
-  const groups = []
-  for (const [label, list] of [
-    [t("mine"), mine],
-    [t("others"), others],
-  ]) {
-    if (!list.length) continue
-    const g = el("optgroup", { label })
-    g.append(...list.map((x) => option(x.id, x.title, x.id === s.taskId)))
-    groups.push(g)
-  }
-  $("task").replaceChildren(option("", t("noTask"), !s.taskId), ...groups)
-}
-
-function currentLabel(s) {
-  const task = s.catalog?.tasks.find((x) => x.id === s.taskId)
-  const project = s.catalog?.projects.find((x) => x.id === s.projectId)
-  return [project?.name, task?.title].filter(Boolean).join(" · ") || t("noTask")
-}
-
 let lastBarsKey = ""
 function renderBars(bars) {
   const key = JSON.stringify(bars)
@@ -107,15 +72,12 @@ function renderBars(bars) {
 }
 
 function renderToday(s) {
-  const rows = todayRows(s.todayTasks)
+  const rows = todayRows(s.todayApps)
   $("today-total").textContent = formatHM(s.todaySeconds)
   $("today-empty").hidden = rows.length > 0
   $("today-list").replaceChildren(
     ...rows.map((r) => {
-      const live = s.tracking && (r.taskId ?? null) === (s.taskId ?? null)
-      const name = el("span", { className: r.title ? "name" : "name none" })
-      if (live) name.append(el("i", { className: "live" }))
-      name.append(r.title ?? t("noTask"))
+      const name = el("span", { className: "name", textContent: r.name, title: r.name })
       const share = el("span", { className: "share" }, el("i"))
       share.firstChild.style.width = `${Math.round(r.share * 100)}%`
       return el("li", {}, name, el("span", { className: "dur", textContent: formatHM(r.seconds) }), share)
@@ -140,13 +102,12 @@ function render(s) {
   if (screen === "main") {
     $("company").textContent = s.companyName ?? "Sentroy Monitor"
     $("user").textContent = s.userName ?? ""
-    renderPickers(s)
     const toggle = $("toggle")
     toggle.setAttribute("aria-pressed", String(s.tracking))
     toggle.setAttribute("aria-label", s.tracking ? t("stop") : t("start"))
     toggle.title = s.tracking ? t("stop") : t("start")
     $("clock").textContent = formatClock(s.sessionSeconds)
-    $("current").textContent = currentLabel(s)
+    $("current").textContent = s.tracking ? t("tracking") : t("notTracking")
     $("today").textContent = formatHM(s.todaySeconds)
     const pct = s.activityPercent
     $("activity").textContent = pct == null ? "—" : `${pct}%`
@@ -286,22 +247,6 @@ $("server-form").addEventListener("submit", (e) => {
 })
 $("server").addEventListener("change", () => call("set_server", { url: $("server").value }))
 $("toggle").addEventListener("click", () => call(state?.tracking ? "stop_tracking" : "start_tracking"))
-$("project").addEventListener("change", (e) => call("select", { projectId: e.target.value || null, taskId: null }))
-$("task").addEventListener("change", (e) => {
-  const taskId = e.target.value || null
-  const task = state?.catalog?.tasks.find((x) => x.id === taskId)
-  call("select", { projectId: task?.projectId ?? state?.projectId ?? null, taskId })
-})
-$("new-task").addEventListener("submit", async (e) => {
-  e.preventDefault()
-  const input = $("new-task-title")
-  const title = input.value.trim()
-  if (!title) return notice("emptyTitle")
-  input.disabled = true
-  await call("create_task", { title })
-  input.disabled = false
-  input.value = ""
-})
 $("update-install").addEventListener("click", () => call("install_update"))
 $("dashboard").addEventListener("click", () => {
   $("main").querySelector(".menu").open = false
@@ -324,7 +269,7 @@ document.addEventListener("click", (e) => {
   if (menu.open && !menu.contains(e.target)) menu.open = false
 })
 document.addEventListener("keydown", (e) => {
-  if (e.key === " " && state?.signedIn && $("perm").hidden && !["INPUT", "SELECT", "BUTTON"].includes(document.activeElement?.tagName)) {
+  if (e.key === " " && state?.signedIn && $("perm").hidden && !["INPUT", "BUTTON"].includes(document.activeElement?.tagName)) {
     e.preventDefault()
     $("toggle").click()
   }

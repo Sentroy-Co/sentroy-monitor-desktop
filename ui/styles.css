@@ -341,43 +341,6 @@ select:focus {
   white-space: nowrap;
 }
 
-/* pickers */
-.pickers {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-.field {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--muted);
-}
-.field select {
-  font-size: 13px;
-  color: var(--fg);
-  text-overflow: ellipsis;
-}
-.new-task {
-  display: flex;
-  gap: 6px;
-}
-.icon-btn {
-  flex-shrink: 0;
-  width: 34px;
-  padding: 0;
-  display: grid;
-  place-items: center;
-}
-.icon-btn svg {
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  fill: none;
-}
-
 /* timer card */
 .timer {
   display: grid;
@@ -603,19 +566,6 @@ select:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.today-list .name.none {
-  color: var(--muted);
-  font-style: italic;
-}
-.today-list .live {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--teal);
-  vertical-align: 1px;
 }
 .today-list .dur {
   font-variant-numeric: tabular-nums;
