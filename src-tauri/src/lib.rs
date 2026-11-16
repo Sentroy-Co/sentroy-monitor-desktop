@@ -9,6 +9,7 @@ mod activity;
 mod api;
 mod os;
 mod screenshots;
+mod sessions;
 mod sites;
 mod store;
 
@@ -27,8 +28,9 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 use activity::{activity_percent, Accumulator, Sample, SAMPLE_SECS};
-use api::{Api, ApiError, DeviceStart, Policy, ScreenshotPolicy, ShotUpload};
+use api::{Api, ApiError, DeviceStart, Policy, ScreenshotPolicy, SessionsUpload, ShotUpload};
 use screenshots::{plan_offsets, ShotQueue, WINDOW_SECS};
+use sessions::{SessionEvent, StopReason};
 use store::{push_bounded, Settings, Store, TodayApp, BARS};
 
 /// Rows in the "today by app" list.
@@ -38,6 +40,9 @@ const UPLOAD_EVERY: Duration = Duration::from_secs(30);
 const UPLOAD_BATCH: usize = 200;
 /// Screenshots uploaded per uploader round.
 const SHOT_BATCH: usize = 10;
+/// After a 404 from `/api/agent/sessions` (older server), wait this long
+/// before asking again; the events stay queued meanwhile.
+const SESSIONS_RETRY_AFTER: chrono::Duration = chrono::Duration::hours(6);
 const POLICY_EVERY: Duration = Duration::from_secs(15 * 60);
 const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
@@ -104,6 +109,10 @@ struct Inner {
     settings: Settings,
     token: Option<String>,
     queue: Vec<Sample>,
+    /// Clock-in/out events waiting for upload (see `sessions`).
+    sessions: Vec<SessionEvent>,
+    /// Set when the server has no sessions endpoint: no upload before then.
+    sessions_retry_at: Option<DateTime<Utc>>,
     tracking: Option<Tracking>,
     login: Option<DeviceStart>,
     online: bool,
@@ -144,6 +153,8 @@ struct Snapshot {
     version: &'static str,
     platform: &'static str,
     server_url: String,
+    /// The Sentroy cloud server (the sign-in screen's default choice).
+    default_server: &'static str,
     consent_accepted: bool,
     signed_in: bool,
     user_name: Option<String>,
@@ -213,6 +224,7 @@ fn snapshot(i: &Inner) -> Snapshot {
         version: env!("CARGO_PKG_VERSION"),
         platform: std::env::consts::OS,
         server_url: i.settings.server_url.clone(),
+        default_server: store::DEFAULT_SERVER,
         consent_accepted: i.settings.consent_accepted,
         signed_in: i.token.is_some(),
         user_name: i.settings.user_name.clone(),
@@ -268,17 +280,39 @@ fn flush_sample(shared: &Shared, i: &mut Inner, now: DateTime<Utc>) {
     }
 }
 
-fn stop_tracking_locked(shared: &Shared, i: &mut Inner) {
-    flush_sample(shared, i, Utc::now());
+/// Queues a clock-in/out event and persists the queue.
+fn enqueue_session(shared: &Shared, i: &mut Inner, e: SessionEvent) {
+    sessions::prune_old(&mut i.sessions, e.at);
+    sessions::push_bounded(&mut i.sessions, e);
+    shared.store.save_sessions(&i.sessions);
+}
+
+/// Starts the timer (when it is not running) and queues the `start` event.
+fn start_tracking_locked(shared: &Shared, i: &mut Inner, now: DateTime<Utc>) {
+    if i.tracking.is_none() {
+        i.tracking = Some(Tracking::new(now, Accumulator::new(now), &i.settings.policy.screenshots));
+        i.notice = None;
+        enqueue_session(shared, i, SessionEvent::start(now));
+    }
+}
+
+/// Stops a running timer: flushes the open sample and queues the `stop` event
+/// with its reason (and, for the end of the day, the note). The uploader is
+/// woken so both go out right away when online.
+fn stop_tracking_locked(shared: &Shared, i: &mut Inner, reason: StopReason, note: Option<&str>) {
+    if i.tracking.is_none() {
+        return;
+    }
+    let now = Utc::now();
+    flush_sample(shared, i, now);
     i.tracking = None;
+    enqueue_session(shared, i, SessionEvent::stop(now, reason, note));
     shared.store.save_settings(&i.settings);
     shared.nudge();
 }
 
 fn sign_out_locked(shared: &Shared, i: &mut Inner) {
-    if i.tracking.is_some() {
-        stop_tracking_locked(shared, i);
-    }
+    stop_tracking_locked(shared, i, StopReason::Quit, None);
     Store::delete_token(&i.settings.server_url);
     i.token = None;
     i.settings.user_name = None;
@@ -291,6 +325,11 @@ fn sign_out_locked(shared: &Shared, i: &mut Inner) {
         shared.shots.remove(&shot);
     }
     i.shots_queued = 0;
+    // Clock-in/out events belong to this device registration, which is gone:
+    // whatever could not be delivered before signing out is dropped too.
+    i.sessions.clear();
+    i.sessions_retry_at = None;
+    shared.store.save_sessions(&i.sessions);
 }
 
 /// Whether the Screen Recording permission the policy needs is missing.
@@ -330,7 +369,7 @@ fn ticker(app: AppHandle, shared: AppState) {
                 flush_sample(&shared, &mut i, now);
             }
             if since.is_some() && since_input >= policy.idle_stop_minutes as f64 * 60.0 {
-                stop_tracking_locked(&shared, &mut i);
+                stop_tracking_locked(&shared, &mut i, StopReason::Idle, None);
                 i.notice = Some("autoStopped".into());
                 shot = None;
             }
@@ -410,7 +449,7 @@ fn upload_samples(shared: &Shared, server: &str, token: &str) {
         Err(ApiError::Rejected(msg)) => {
             // A sample the server will never accept must not block the queue:
             // drop the one it names (`samples[3]: …`), or the batch if unnamed.
-            let bad: Vec<String> = match rejected_index(&msg).and_then(|n| batch.get(n)) {
+            let bad: Vec<String> = match rejected_index(&msg, "samples").and_then(|n| batch.get(n)) {
                 Some(s) => vec![s.id.clone()],
                 None => batch.iter().map(|s| s.id.clone()).collect(),
             };
@@ -435,7 +474,10 @@ fn upload_shots(shared: &Shared, server: &str, token: &str) {
         let outcome = api.upload_screenshot(token, &shot.id, shot.taken_at, shot.width, shot.height, jpeg);
         eprintln!("screenshot {}: {outcome:?}", shot.id);
         match outcome {
-            ShotUpload::Done | ShotUpload::Drop => shared.shots.remove(&shot),
+            ShotUpload::Done | ShotUpload::Drop => {
+                shared.shots.remove(&shot);
+                shared.inner.lock().unwrap().online = true;
+            }
             ShotUpload::Retry => {
                 shared.inner.lock().unwrap().online = false;
                 break;
@@ -451,6 +493,71 @@ fn upload_shots(shared: &Shared, server: &str, token: &str) {
     shared.inner.lock().unwrap().shots_queued = shared.shots.len();
 }
 
+/// Applies the outcome of uploading `batch` (the oldest queued events) to the
+/// queue. Returns true when more is queued and could go out right away.
+fn settle_sessions(i: &mut Inner, batch: &[SessionEvent], outcome: SessionsUpload, now: DateTime<Utc>) -> bool {
+    match outcome {
+        SessionsUpload::Done => {
+            let sent: std::collections::HashSet<&str> = batch.iter().map(|e| e.id.as_str()).collect();
+            i.sessions.retain(|e| !sent.contains(e.id.as_str()));
+            i.sessions_retry_at = None;
+            i.online = true;
+            i.last_sync = Some(now);
+            !i.sessions.is_empty()
+        }
+        SessionsUpload::NotAvailable => {
+            // An older server: keep them (pruned after 30 days), ask again later.
+            i.sessions_retry_at = Some(now + SESSIONS_RETRY_AFTER);
+            i.online = true;
+            false
+        }
+        SessionsUpload::Rejected(msg) => {
+            // Never let an event the server refuses block the queue.
+            let bad: Vec<String> = match rejected_index(&msg, "events").and_then(|n| batch.get(n)) {
+                Some(e) => vec![e.id.clone()],
+                None => batch.iter().map(|e| e.id.clone()).collect(),
+            };
+            i.sessions.retain(|e| !bad.contains(&e.id));
+            !i.sessions.is_empty()
+        }
+        SessionsUpload::Retry => {
+            i.online = false;
+            false
+        }
+        // Handled by the caller (sign-out).
+        SessionsUpload::Unauthorized => false,
+    }
+}
+
+/// Uploads the oldest queued clock-in/out events. Returns true when more are
+/// waiting and could be sent right away.
+fn upload_sessions(shared: &Shared, server: &str, token: &str) -> bool {
+    let now = Utc::now();
+    let batch: Vec<SessionEvent> = {
+        let mut i = shared.inner.lock().unwrap();
+        if sessions::prune_old(&mut i.sessions, now) {
+            shared.store.save_sessions(&i.sessions);
+        }
+        if i.sessions.is_empty() || i.sessions_retry_at.is_some_and(|t| now < t) {
+            return false;
+        }
+        i.sessions.iter().take(sessions::UPLOAD_BATCH).cloned().collect()
+    };
+    let outcome = Api::new(server).upload_sessions(token, &batch);
+    let mut i = shared.inner.lock().unwrap();
+    if i.token.as_deref() != Some(token) {
+        return false;
+    }
+    if outcome == SessionsUpload::Unauthorized {
+        sign_out_locked(shared, &mut i);
+        i.notice = Some("signedOut".into());
+        return false;
+    }
+    let more = settle_sessions(&mut i, &batch, outcome, now);
+    shared.store.save_sessions(&i.sessions);
+    more
+}
+
 fn uploader(app: AppHandle, shared: AppState, rx: mpsc::Receiver<()>) {
     loop {
         let _ = rx.recv_timeout(UPLOAD_EVERY);
@@ -462,6 +569,9 @@ fn uploader(app: AppHandle, shared: AppState, rx: mpsc::Receiver<()>) {
             }
         };
         upload_samples(&shared, &server, &token);
+        if upload_sessions(&shared, &server, &token) {
+            shared.nudge();
+        }
         upload_shots(&shared, &server, &token);
         emit(&app, &shared.inner.lock().unwrap());
     }
@@ -488,12 +598,19 @@ fn deliver_now(shared: &Shared) {
         i.queue.retain(|s| !ids.contains(&s.id));
         shared.store.save_queue(&i.queue);
     }
+    for _ in 0..sessions::MAX_EVENTS.div_ceil(sessions::UPLOAD_BATCH) {
+        if !upload_sessions(shared, &server, &token) {
+            break;
+        }
+    }
     upload_shots(shared, &server, &token);
 }
 
-/// Index from a server validation message like `invalid_samples samples[3]: bad id`.
-fn rejected_index(msg: &str) -> Option<usize> {
-    let rest = &msg[msg.find("samples[")? + "samples[".len()..];
+/// Index from a server validation message like `invalid_samples samples[3]: bad id`
+/// (`field` = "samples") or `invalid_events events[1]: …` (`field` = "events").
+fn rejected_index(msg: &str, field: &str) -> Option<usize> {
+    let key = format!("{field}[");
+    let rest = &msg[msg.find(&key)? + key.len()..];
     rest[..rest.find(']')?].parse().ok()
 }
 
@@ -667,9 +784,7 @@ async fn logout(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
     let shared = state.inner().clone();
     let (server, token) = {
         let mut i = shared.inner.lock().unwrap();
-        if i.tracking.is_some() {
-            stop_tracking_locked(&shared, &mut i);
-        }
+        stop_tracking_locked(&shared, &mut i, StopReason::Quit, None);
         (i.settings.server_url.clone(), i.token.clone())
     };
     // Try to deliver queued time and screenshots before the token goes away.
@@ -705,22 +820,18 @@ fn start_tracking(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
     if screen_permission_missing(&i.settings.policy) {
         return Err("permissionsRequired".into());
     }
-    if i.tracking.is_none() {
-        let now = Utc::now();
-        let acc = Accumulator::new(now);
-        i.tracking = Some(Tracking::new(now, acc, &i.settings.policy.screenshots));
-        i.notice = None;
-    }
+    start_tracking_locked(&state, &mut i, Utc::now());
     emit(&app, &i);
     Ok(())
 }
 
+/// Stops the timer from the stop dialog: `reason` is `end_of_day` (with an
+/// optional `note`) or `break`; anything else counts as the end of the day.
 #[tauri::command]
-fn stop_tracking(app: AppHandle, state: State<'_, AppState>) {
+fn stop_tracking(app: AppHandle, state: State<'_, AppState>, reason: Option<String>, note: Option<String>) {
+    let reason = reason.as_deref().and_then(StopReason::parse).unwrap_or(StopReason::EndOfDay);
     let mut i = state.inner.lock().unwrap();
-    if i.tracking.is_some() {
-        stop_tracking_locked(&state, &mut i);
-    }
+    stop_tracking_locked(&state, &mut i, reason, note.as_deref());
     emit(&app, &i);
 }
 
@@ -798,12 +909,7 @@ fn open_permission_settings(app: AppHandle, kind: String) {
 #[tauri::command]
 async fn restart_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let shared = state.inner().clone();
-    {
-        let mut i = shared.inner.lock().unwrap();
-        if i.tracking.is_some() {
-            stop_tracking_locked(&shared, &mut i);
-        }
-    }
+    stop_tracking_locked(&shared, &mut shared.inner.lock().unwrap(), StopReason::Quit, None);
     let _ = tauri::async_runtime::spawn_blocking(move || deliver_now(&shared)).await;
     app.restart()
 }
@@ -825,9 +931,7 @@ async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<()
     {
         let mut i = shared.inner.lock().unwrap();
         // Never restart under a running timer: stop and flush it first.
-        if i.tracking.is_some() {
-            stop_tracking_locked(&shared, &mut i);
-        }
+        stop_tracking_locked(&shared, &mut i, StopReason::Quit, None);
         i.updating = true;
         emit(&app, &i);
     }
@@ -847,11 +951,14 @@ async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<()
     }
 }
 
+/// Tray "Start / Stop". Stopping goes through the in-app "End your day?"
+/// dialog, so the window is brought up and asked to show it.
 fn toggle_tracking(app: &AppHandle) {
     let state: State<'_, AppState> = app.state();
     let tracking = state.inner.lock().unwrap().tracking.is_some();
     if tracking {
-        stop_tracking(app.clone(), state);
+        show_main(app);
+        let _ = app.emit("confirm-stop", ());
     } else {
         let _ = start_tracking(app.clone(), state);
         show_main(app);
@@ -881,10 +988,11 @@ pub fn run() {
             let settings = store.load_settings();
             let token = Store::load_token(&settings.server_url);
             let queue = store.load_queue();
+            let sessions = store.load_sessions();
             let shots_queued = shots.len();
             let (tx, rx) = mpsc::channel();
             let shared: AppState = Arc::new(Shared {
-                inner: Mutex::new(Inner { settings, token, queue, shots_queued, ..Default::default() }),
+                inner: Mutex::new(Inner { settings, token, queue, sessions, shots_queued, ..Default::default() }),
                 store,
                 shots,
                 nudge: Mutex::new(tx),
@@ -907,12 +1015,7 @@ pub fn run() {
                     "toggle" => toggle_tracking(app),
                     "quit" => {
                         let state: State<'_, AppState> = app.state();
-                        {
-                            let mut i = state.inner.lock().unwrap();
-                            if i.tracking.is_some() {
-                                stop_tracking_locked(&state, &mut i);
-                            }
-                        }
+                        stop_tracking_locked(&state, &mut state.inner.lock().unwrap(), StopReason::Quit, None);
                         // Give the uploader one chance to send the last minute.
                         thread::sleep(Duration::from_millis(1500));
                         app.exit(0);
@@ -975,6 +1078,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Sentroy Monitor")
         .run(|_app, _event| {
+            // Quitting by any other way than the tray (OS shutdown, Dock menu):
+            // the running timer still ends with a `quit` stop event on disk.
+            if let tauri::RunEvent::Exit = _event {
+                if let Some(state) = _app.try_state::<AppState>() {
+                    stop_tracking_locked(&state, &mut state.inner.lock().unwrap(), StopReason::Quit, None);
+                }
+            }
             // Clicking the Dock icon re-opens the window (macOS only event).
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
@@ -989,9 +1099,11 @@ mod tests {
 
     #[test]
     fn parses_rejected_sample_index() {
-        assert_eq!(rejected_index("invalid_samples samples[3]: bad id"), Some(3));
-        assert_eq!(rejected_index("invalid_samples samples must be an array"), None);
-        assert_eq!(rejected_index("samples[x]"), None);
+        assert_eq!(rejected_index("invalid_samples samples[3]: bad id", "samples"), Some(3));
+        assert_eq!(rejected_index("invalid_samples samples must be an array", "samples"), None);
+        assert_eq!(rejected_index("samples[x]", "samples"), None);
+        assert_eq!(rejected_index("invalid_events events[1]: bad kind", "events"), Some(1));
+        assert_eq!(rejected_index("invalid_events events[1]: bad kind", "samples"), None);
     }
 
     #[test]
@@ -1048,6 +1160,121 @@ mod tests {
         let top = today_apps(&i, true);
         assert_eq!(top.len(), TODAY_APPS);
         assert_eq!(top[0].seconds, 19);
+    }
+
+    fn shared_in(dir: &std::path::Path) -> (Shared, mpsc::Receiver<()>) {
+        let (tx, rx) = mpsc::channel();
+        let shared = Shared {
+            inner: Mutex::new(Inner::default()),
+            store: Store::new(dir.to_path_buf()),
+            shots: ShotQueue::new(dir.join("screenshots")),
+            nudge: Mutex::new(tx),
+            capturing: AtomicBool::new(false),
+            pending_update: Mutex::new(None),
+        };
+        (shared, rx)
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("sm-lib-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn start_and_stop_queue_session_events_on_disk() {
+        let dir = temp_dir();
+        let (shared, rx) = shared_in(&dir);
+        let mut i = shared.inner.lock().unwrap();
+        // Stopping a timer that is not running records nothing.
+        stop_tracking_locked(&shared, &mut i, StopReason::EndOfDay, Some("x"));
+        assert!(i.sessions.is_empty());
+
+        start_tracking_locked(&shared, &mut i, Utc::now());
+        start_tracking_locked(&shared, &mut i, Utc::now()); // already running: no second start
+        assert_eq!(i.sessions.len(), 1);
+        assert_eq!(i.sessions[0].kind, sessions::Kind::Start);
+
+        stop_tracking_locked(&shared, &mut i, StopReason::EndOfDay, Some(" Wrapped up the release. "));
+        assert!(i.tracking.is_none());
+        let stop = i.sessions.last().unwrap();
+        assert_eq!((stop.kind, stop.reason), (sessions::Kind::Stop, Some(StopReason::EndOfDay)));
+        assert_eq!(stop.note.as_deref(), Some("Wrapped up the release."));
+        assert!(rx.try_recv().is_ok(), "the uploader is woken right after a stop");
+
+        // A break carries no note; the idle auto-stop has its own reason.
+        start_tracking_locked(&shared, &mut i, Utc::now());
+        stop_tracking_locked(&shared, &mut i, StopReason::Break, Some("lunch"));
+        start_tracking_locked(&shared, &mut i, Utc::now());
+        stop_tracking_locked(&shared, &mut i, StopReason::Idle, None);
+        let reasons: Vec<_> = i.sessions.iter().map(|e| (e.kind, e.reason, e.note.is_some())).collect();
+        use sessions::Kind::{Start, Stop};
+        assert_eq!(
+            reasons,
+            vec![
+                (Start, None, false),
+                (Stop, Some(StopReason::EndOfDay), true),
+                (Start, None, false),
+                (Stop, Some(StopReason::Break), false),
+                (Start, None, false),
+                (Stop, Some(StopReason::Idle), false),
+            ]
+        );
+        // Persisted: a restart sees the same queue.
+        assert_eq!(Store::new(dir.clone()).load_sessions(), i.sessions);
+        drop(i);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn signing_out_while_tracking_stops_with_quit_and_drops_the_queue() {
+        let dir = temp_dir();
+        let (shared, _rx) = shared_in(&dir);
+        let mut i = shared.inner.lock().unwrap();
+        i.token = Some("t".into());
+        start_tracking_locked(&shared, &mut i, Utc::now());
+        stop_tracking_locked(&shared, &mut i, StopReason::Quit, None);
+        assert_eq!(i.sessions.last().unwrap().reason, Some(StopReason::Quit));
+        start_tracking_locked(&shared, &mut i, Utc::now());
+        sign_out_locked(&shared, &mut i);
+        assert!(i.tracking.is_none() && i.token.is_none());
+        assert!(i.sessions.is_empty());
+        assert!(Store::new(dir.clone()).load_sessions().is_empty());
+        drop(i);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn session_upload_outcomes() {
+        let now = Utc::now();
+        let mut i = Inner {
+            sessions: (0..3).map(|k| SessionEvent::start(now - chrono::Duration::minutes(3 - k))).collect(),
+            ..Default::default()
+        };
+        let batch = i.sessions[..2].to_vec();
+
+        // Offline: nothing changes.
+        assert!(!settle_sessions(&mut i, &batch, SessionsUpload::Retry, now));
+        assert_eq!((i.sessions.len(), i.online), (3, false));
+
+        // Older server: kept, and not asked again for a while.
+        assert!(!settle_sessions(&mut i, &batch, SessionsUpload::NotAvailable, now));
+        assert_eq!(i.sessions.len(), 3);
+        assert_eq!(i.sessions_retry_at, Some(now + SESSIONS_RETRY_AFTER));
+
+        // Rejected naming one event: only that one goes.
+        let bad = batch[1].id.clone();
+        assert!(settle_sessions(&mut i, &batch, SessionsUpload::Rejected("invalid_events events[1]: x".into()), now));
+        assert!(i.sessions.iter().all(|e| e.id != bad) && i.sessions.len() == 2);
+
+        // Delivered: the batch leaves the queue, newer events stay.
+        let batch = i.sessions[..1].to_vec();
+        assert!(settle_sessions(&mut i, &batch, SessionsUpload::Done, now));
+        assert_eq!(i.sessions.len(), 1);
+        assert!(i.online && i.sessions_retry_at.is_none());
+
+        // Rejected without an index: the whole batch is dropped.
+        let batch = i.sessions.clone();
+        assert!(!settle_sessions(&mut i, &batch, SessionsUpload::Rejected("invalid_events bad body".into()), now));
+        assert!(i.sessions.is_empty());
     }
 
     #[test]

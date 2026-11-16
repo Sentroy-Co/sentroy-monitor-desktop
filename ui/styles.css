@@ -19,6 +19,9 @@
   --bad: #e5484d;
   --shadow: 0 1px 2px rgb(7 50 67 / 0.06), 0 4px 14px rgb(7 50 67 / 0.06);
   --radius: 14px;
+  /* Sentroy brand red (the logo's shield), for "Continue with Sentroy". */
+  --sentroy-red: #e5243b;
+  --sentroy-red-2: #f0394c;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -172,7 +175,8 @@ button:disabled {
   pointer-events: none;
 }
 input,
-select {
+select,
+textarea {
   font: inherit;
   color: inherit;
   width: 100%;
@@ -186,7 +190,8 @@ select {
   -webkit-user-select: text;
 }
 input:focus,
-select:focus {
+select:focus,
+textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
@@ -197,13 +202,129 @@ select:focus {
 .row.end {
   justify-content: flex-end;
 }
-.server summary {
-  color: var(--muted);
-  font-size: 12px;
+/* sign-in: server picker */
+.sentroy-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 11px;
+  background: linear-gradient(135deg, var(--sentroy-red) 0%, var(--sentroy-red-2) 100%);
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.18) inset, 0 6px 18px rgb(229 36 59 / 0.28);
+  transition: filter 0.12s ease, transform 0.12s ease, opacity 0.15s ease;
 }
-.server input {
-  margin-top: 8px;
-  font-size: 12px;
+.sentroy-btn:hover {
+  background: linear-gradient(135deg, var(--sentroy-red) 0%, var(--sentroy-red-2) 100%);
+  filter: brightness(1.07);
+}
+.sentroy-btn:active {
+  transform: translateY(1px);
+}
+.sentroy-btn img {
+  width: 18px;
+  height: 20px;
+  flex-shrink: 0;
+}
+/* Self-hosted is the chosen path: Sentroy stays available but steps back. */
+.sentroy-btn.quiet {
+  opacity: 0.72;
+  box-shadow: none;
+}
+.sentroy-btn:focus-visible,
+.self-btn:focus-visible,
+.scheme button:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.self-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  color: var(--fg);
+}
+.self-btn span {
+  flex: 1;
+  text-align: left;
+}
+.self-btn svg {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+.self-btn .chev {
+  transition: transform 0.15s ease;
+}
+.self-btn[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: var(--accent-soft);
+}
+.self-btn[aria-expanded="true"] .chev {
+  transform: rotate(180deg);
+}
+.server-form {
+  display: grid;
+  gap: 8px;
+  margin-top: -4px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  animation: drop 0.18s ease-out;
+}
+.url-field {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.url-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.url-field input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding-left: 8px;
+}
+.url-field input:focus {
+  box-shadow: none;
+}
+.scheme {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-right: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.scheme button {
+  border: 0;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: 500 11px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.scheme button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
 }
 .code {
   font: 600 28px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -782,4 +903,50 @@ select:focus {
 }
 .mac .sheet-backdrop {
   padding-top: 38px;
+}
+
+/* stop dialog */
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sheet-head h2 {
+  flex: 1;
+}
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+.icon-btn svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.icon-btn:hover {
+  color: var(--fg);
+}
+.eod {
+  gap: 8px;
+}
+.eod-label {
+  margin-top: 4px;
+  font-weight: 600;
+}
+.eod textarea {
+  resize: vertical;
+  min-height: 84px;
+  max-height: 220px;
+  line-height: 1.45;
+}
+.eod .row {
+  margin-top: 4px;
 }

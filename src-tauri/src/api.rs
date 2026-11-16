@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::activity::Sample;
+use crate::sessions::SessionEvent;
 
 #[derive(Debug)]
 pub enum ApiError {
@@ -134,6 +135,30 @@ fn shot_outcome(status: StatusCode) -> ShotUpload {
     }
 }
 
+/// Outcome of one `/api/agent/sessions` upload.
+#[derive(Debug, PartialEq)]
+pub enum SessionsUpload {
+    /// Stored (new or duplicate): remove them from the queue.
+    Done,
+    /// 404: the server predates the endpoint. Keep them, try again much later.
+    NotAvailable,
+    /// 400: the server will never take this batch (the message may name `events[i]`).
+    Rejected(String),
+    /// Network or server trouble: keep them for later.
+    Retry,
+    Unauthorized,
+}
+
+fn sessions_outcome(status: StatusCode, message: impl FnOnce() -> String) -> SessionsUpload {
+    match status.as_u16() {
+        200..=299 => SessionsUpload::Done,
+        401 => SessionsUpload::Unauthorized,
+        404 => SessionsUpload::NotAvailable,
+        408 | 429 | 500..=599 => SessionsUpload::Retry,
+        _ => SessionsUpload::Rejected(message()),
+    }
+}
+
 pub struct Api {
     base: String,
     http: Client,
@@ -217,6 +242,21 @@ impl Api {
         Ok(())
     }
 
+    /// Uploads clock-in/out events; the server de-duplicates by device + event id.
+    pub fn upload_sessions(&self, token: &str, events: &[SessionEvent]) -> SessionsUpload {
+        let res = self.http.post(self.url("/api/agent/sessions")).bearer_auth(token).json(&json!({ "events": events })).send();
+        match res {
+            Err(_) => SessionsUpload::Retry,
+            Ok(r) => {
+                let status = r.status();
+                sessions_outcome(status, || {
+                    let body: ErrorBody = r.json().unwrap_or(ErrorBody { error: None, message: None });
+                    format!("{} {}", body.error.unwrap_or_else(|| "error".into()), body.message.unwrap_or_default())
+                })
+            }
+        }
+    }
+
     /// Uploads one JPEG screenshot (the id makes retries idempotent).
     pub fn upload_screenshot(
         &self,
@@ -296,5 +336,16 @@ mod tests {
         assert_eq!(shot_outcome(StatusCode::UNAUTHORIZED), ShotUpload::Unauthorized);
         assert_eq!(shot_outcome(StatusCode::BAD_GATEWAY), ShotUpload::Retry);
         assert_eq!(shot_outcome(StatusCode::TOO_MANY_REQUESTS), ShotUpload::Retry);
+    }
+
+    #[test]
+    fn sessions_status_handling() {
+        let msg = || "invalid_events events[2]: bad id".to_string();
+        assert_eq!(sessions_outcome(StatusCode::OK, msg), SessionsUpload::Done);
+        assert_eq!(sessions_outcome(StatusCode::UNAUTHORIZED, msg), SessionsUpload::Unauthorized);
+        assert_eq!(sessions_outcome(StatusCode::NOT_FOUND, msg), SessionsUpload::NotAvailable);
+        assert_eq!(sessions_outcome(StatusCode::BAD_GATEWAY, msg), SessionsUpload::Retry);
+        assert_eq!(sessions_outcome(StatusCode::TOO_MANY_REQUESTS, msg), SessionsUpload::Retry);
+        assert_eq!(sessions_outcome(StatusCode::BAD_REQUEST, msg), SessionsUpload::Rejected(msg()));
     }
 }

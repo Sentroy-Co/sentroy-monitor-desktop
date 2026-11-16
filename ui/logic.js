@@ -31,3 +31,25 @@ export function todayRows(apps) {
   const max = Math.max(1, ...list.map((x) => x.seconds))
   return list.map((x) => ({ ...x, share: x.seconds / max }))
 }
+
+/**
+ * Splits a typed or pasted server address into its scheme ("https" | "http")
+ * and the rest: trimmed, without the scheme and without trailing slashes.
+ * `fallback` is the scheme when the text has none (the toggle's state).
+ */
+export function splitServerUrl(raw, fallback = "https") {
+  let rest = String(raw ?? "").trim()
+  let scheme = fallback === "http" ? "http" : "https"
+  const m = /^(https?):\/\//i.exec(rest)
+  if (m) {
+    scheme = m[1].toLowerCase()
+    rest = rest.slice(m[0].length).trim()
+  }
+  return { scheme, rest: rest.replace(/\/+$/, "") }
+}
+
+/** `<scheme>://<rest>` for `set_server`, or "" when there is no host yet. */
+export function buildServerUrl(scheme, rest) {
+  const p = splitServerUrl(rest, scheme)
+  return p.rest ? `${p.scheme}://${p.rest}` : ""
+}

@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import { LANGS, STRINGS, pickLang, translator } from "./i18n.js"
-import { activityBand, formatClock, formatHM, permissionsBlock, todayRows } from "./logic.js"
+import { activityBand, buildServerUrl, formatClock, formatHM, permissionsBlock, splitServerUrl, todayRows } from "./logic.js"
 
 test("every language has exactly the English keys", () => {
   const keys = Object.keys(STRINGS.en).sort()
@@ -20,6 +20,7 @@ test("placeholders survive translation", () => {
     assert.match(t("autoStopped", { n: 45 }), /45/)
     assert.match(t("updateAvailable", { version: "9.8.7" }), /9\.8\.7/)
     assert.match(t("shotsPolicy", { n: 2 }), /2/)
+    assert.match(t("eodSummary", { time: "6:42" }), /6:42/)
   }
 })
 
@@ -61,4 +62,19 @@ test("todayRows computes shares and skips empty entries", () => {
   ])
   assert.deepEqual(rows.map((r) => [r.name, r.share]), [["Figma", 1], ["Safari", 0.5]])
   assert.deepEqual(todayRows(undefined), [])
+})
+
+test("splitServerUrl moves a typed scheme into the toggle", () => {
+  assert.deepEqual(splitServerUrl("  HTTPS://monitor.acme.io/// "), { scheme: "https", rest: "monitor.acme.io" })
+  assert.deepEqual(splitServerUrl("http://localhost:3000/", "https"), { scheme: "http", rest: "localhost:3000" })
+  assert.deepEqual(splitServerUrl("monitor.acme.io/sub/", "http"), { scheme: "http", rest: "monitor.acme.io/sub" })
+  assert.deepEqual(splitServerUrl("", "nonsense"), { scheme: "https", rest: "" })
+})
+
+test("buildServerUrl normalises before set_server", () => {
+  assert.equal(buildServerUrl("https", " monitor.acme.io/ "), "https://monitor.acme.io")
+  assert.equal(buildServerUrl("https", "http://localhost:3000"), "http://localhost:3000")
+  assert.equal(buildServerUrl("http", "127.0.0.1:8080//"), "http://127.0.0.1:8080")
+  assert.equal(buildServerUrl("https", "   "), "")
+  assert.equal(buildServerUrl("https", "https://"), "")
 })

@@ -32,13 +32,27 @@
       <h1 data-t="signinTitle"></h1>
       <div id="signin-idle" class="stack">
         <p class="muted" data-t="signinIntro"></p>
-        <button id="login" class="primary wide" data-t="signinButton"></button>
-        <details class="server">
-          <summary data-t="server"></summary>
-          <form id="server-form">
-            <input id="server" type="url" spellcheck="false" autocomplete="off" />
-          </form>
-        </details>
+        <button id="login-sentroy" class="sentroy-btn">
+          <img src="sentroy-mark.svg" alt="" width="18" height="20" />
+          <span data-t="continueSentroy"></span>
+        </button>
+        <button id="pick-self" class="self-btn" aria-expanded="false" aria-controls="server-form">
+          <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><rect x="3" y="3.5" width="14" height="5.5" rx="1.5" /><rect x="3" y="11" width="14" height="5.5" rx="1.5" /><circle cx="6.2" cy="6.25" r=".6" /><circle cx="6.2" cy="13.75" r=".6" /></svg>
+          <span data-t="selfHosted"></span>
+          <svg class="chev" viewBox="0 0 20 20" width="12" height="12" aria-hidden="true"><path d="M6 8l4 4 4-4" /></svg>
+        </button>
+        <form id="server-form" class="server-form" hidden novalidate>
+          <label for="server-host" class="small muted" data-t="serverAddress"></label>
+          <div class="url-field">
+            <div class="scheme" role="group" data-t-aria="protocol">
+              <button type="button" data-scheme="https" aria-pressed="true">https://</button>
+              <button type="button" data-scheme="http" aria-pressed="false">http://</button>
+            </div>
+            <input id="server-host" type="text" inputmode="url" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="monitor.example.com" />
+          </div>
+          <p id="http-hint" class="small muted" data-t="selfHostedHint" hidden></p>
+          <button id="login-self" type="submit" class="primary wide" data-t="signinButton"></button>
+        </form>
       </div>
       <div id="signin-pending" class="stack" hidden>
         <p class="muted" data-t="signinCode"></p>
@@ -136,6 +150,26 @@
           <button id="perm-continue" class="primary" data-t="permContinue"></button>
         </div>
       </div>
+    </div>
+
+    <!-- Stop dialog: end of day (with a note) or a short break -->
+    <div id="eod" class="sheet-backdrop" hidden>
+      <form id="eod-form" class="sheet eod" role="dialog" aria-modal="true" aria-labelledby="eod-title">
+        <div class="sheet-head">
+          <h2 id="eod-title" data-t="eodTitle"></h2>
+          <button type="button" id="eod-close" class="icon-btn" data-t-aria="close">
+            <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
+          </button>
+        </div>
+        <p id="eod-summary" class="muted small"></p>
+        <label for="eod-note" class="eod-label" data-t="eodQuestion"></label>
+        <textarea id="eod-note" rows="4" maxlength="2000" data-t-placeholder="eodPlaceholder"></textarea>
+        <p class="muted small" data-t="eodNoteShared"></p>
+        <div class="row end">
+          <button type="button" id="eod-break" data-t="eodBreak"></button>
+          <button type="submit" id="eod-end" class="primary" data-t="eodEnd"></button>
+        </div>
+      </form>
     </div>
 
     <div id="toast" class="toast" role="status" hidden>
