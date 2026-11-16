@@ -90,6 +90,7 @@ function renderToday(s) {
 function render(s) {
   const policyChanged = JSON.stringify(state?.policy) !== JSON.stringify(s.policy) || state?.signedIn !== s.signedIn
   state = s
+  if (!$("perm").hidden) renderPolicy(s)
   for (const v of document.querySelectorAll(".version-line")) v.textContent = `Sentroy Monitor v${s.version}`
   const screen = !s.consentAccepted ? "consent" : !s.signedIn ? "signin" : "main"
   for (const id of ["consent", "signin", "main"]) $(id).hidden = id !== screen
@@ -300,8 +301,28 @@ function renderPermissions(items) {
       )
     }),
   )
+  renderPolicy(state)
   $("perm-restart").hidden = !items.some((p) => p.required && !p.granted && p.needsRestart)
   $("perm-continue").disabled = blocking
+}
+
+/** What the company configured on the web, read-only (the server's policy). */
+function renderPolicy(s) {
+  const p = s?.policy
+  if (!p) return
+  const shots = p.screenshots ?? {}
+  const on = (v) => el("span", { className: v ? "pill on" : "pill", textContent: v ? t("on") : t("off") })
+  const sitesSupported = s.platform === "macos"
+  const rows = [
+    [t("policyScreenshots"), shots.enabled ? el("span", { className: "pill on", textContent: t("policyEvery", { n: shots.perTenMinutes ?? 1 }) }) : on(false)],
+    ...(shots.enabled ? [[t("policyBlur"), on(!!shots.blur)]] : []),
+    [
+      t("policySites"),
+      p.sites && !sitesSupported ? el("span", { className: "pill", textContent: t("policySitesUnsupported") }) : on(!!p.sites),
+    ],
+    [t("policyIdle"), el("span", { className: "pill", textContent: t("policyMinutes", { n: p.idleStopMinutes ?? 30 }) })],
+  ]
+  $("policy-list").replaceChildren(...rows.flatMap(([label, value]) => [el("dt", { textContent: label }), el("dd", {}, value)]))
 }
 
 function closePermissions() {

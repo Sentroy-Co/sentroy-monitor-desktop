@@ -950,3 +950,45 @@ textarea:focus {
 .eod .row {
   margin-top: 4px;
 }
+
+/* company settings preview in the permissions sheet */
+.sheet-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.policy-list {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.policy-list dt,
+.policy-list dd {
+  margin: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.policy-list dt:first-of-type,
+.policy-list dt:first-of-type + dd {
+  border-top: 0;
+}
+.policy-list dd {
+  text-align: right;
+}
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: var(--line);
+  color: var(--muted, inherit);
+}
+.pill.on {
+  background: color-mix(in srgb, var(--accent, #2bb5a0) 18%, transparent);
+  color: var(--accent, #2bb5a0);
+}
