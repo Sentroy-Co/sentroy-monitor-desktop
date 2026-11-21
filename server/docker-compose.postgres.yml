@@ -1,0 +1,92 @@
+# Sentroy Monitor server, self-hosted on PostgreSQL (no Sentroy account needed).
+#
+# Same server as docker-compose.yml, with the data in PostgreSQL: FerretDB
+# (open source) speaks the MongoDB protocol the server uses and stores
+# everything in PostgreSQL tables. Back it up like any PostgreSQL.
+#
+#   1. Put a .env next to this file (see server/README.md):
+#        MONITOR_PUBLIC_URL=https://monitor.example.com
+#        MONITOR_ENCRYPTION_KEY=<openssl rand -base64 32>
+#        POSTGRES_PASSWORD=<openssl rand -hex 24>
+#   2. docker compose -f docker-compose.postgres.yml up -d
+#   3. Open ${MONITOR_PUBLIC_URL}/setup, create the first administrator, then
+#      choose where screenshots are stored.
+#
+# Put a TLS-terminating reverse proxy (Caddy, Traefik, nginx) in front of port
+# 3014; sessions use Secure cookies in production.
+
+services:
+  monitor:
+    image: ghcr.io/sentroy-co/sentroy-oss-monitor:${MONITOR_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      ferretdb:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3014:3014"
+    environment:
+      MONITOR_MODE: selfhost
+      MONITOR_PUBLIC_URL: ${MONITOR_PUBLIC_URL:?set MONITOR_PUBLIC_URL, e.g. https://monitor.example.com}
+      # FerretDB authenticates with the PostgreSQL user.
+      MONGODB_URI: mongodb://monitor:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD, e.g. openssl rand -hex 24}@ferretdb:27017/
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-monitor}
+      # Optional: lock /setup with a one-time token (use a long random value).
+      # Without it, the first visitor creates the administrator. Remove after setup.
+      MONITOR_SETUP_TOKEN: ${MONITOR_SETUP_TOKEN:-}
+      # 32-byte key (base64 or 64 hex chars) that encrypts secrets saved in the
+      # admin UI (SSO client secret, storage credentials). Keep it safe: losing
+      # it means re-entering those secrets.
+      MONITOR_ENCRYPTION_KEY: "${MONITOR_ENCRYPTION_KEY:?generate one with openssl rand -base64 32}"
+      # Sentroy for the one-click "Connect Sentroy Storage" button (default https://sentroy.com).
+      MONITOR_SENTROY_URL: ${MONITOR_SENTROY_URL:-}
+      # Optional: storage from the environment instead of the admin UI
+      # (s3 | sentroy | firebase | local | none). Local keeps screenshots in the volume below.
+      MONITOR_STORAGE: ${MONITOR_STORAGE:-}
+      MONITOR_STORAGE_DIR: /data/screenshots
+      # Optional: SSO from the environment instead of the admin UI.
+      MONITOR_OIDC_ISSUER: ${MONITOR_OIDC_ISSUER:-}
+      MONITOR_OIDC_CLIENT_ID: ${MONITOR_OIDC_CLIENT_ID:-}
+      MONITOR_OIDC_CLIENT_SECRET: ${MONITOR_OIDC_CLIENT_SECRET:-}
+    volumes:
+      - monitor-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3014/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 40s
+
+  postgres:
+    # PostgreSQL 17 with the DocumentDB extension FerretDB needs (pinned, tested with Monitor).
+    image: ghcr.io/ferretdb/postgres-documentdb:17-0.106.0-ferretdb-2.5.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: monitor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monitor -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ferretdb:
+    image: ghcr.io/ferretdb/ferretdb:2.5.0
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FERRETDB_POSTGRESQL_URL: postgres://monitor:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/postgres
+      FERRETDB_TELEMETRY: disable
+    healthcheck:
+      test: ["CMD", "/ferretdb", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  monitor-data:
+  postgres-data:
