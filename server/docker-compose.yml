@@ -30,7 +30,7 @@ services:
       # 32-byte key (base64 or 64 hex chars) that encrypts secrets saved in the
       # admin UI (SSO client secret, storage credentials). Keep it safe: losing
       # it means re-entering those secrets.
-      MONITOR_ENCRYPTION_KEY: ${MONITOR_ENCRYPTION_KEY:?generate with: openssl rand -base64 32}
+      MONITOR_ENCRYPTION_KEY: "${MONITOR_ENCRYPTION_KEY:?generate one with openssl rand -base64 32}"
       # Sentroy for the one-click "Connect Sentroy Storage" button (default https://sentroy.com).
       MONITOR_SENTROY_URL: ${MONITOR_SENTROY_URL:-}
       # Optional: storage from the environment instead of the admin UI
