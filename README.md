@@ -1,83 +1,128 @@
 <div align="center">
 
-<img src=".github/readme/icon.png" alt="" width="104">
+<img src=".github/readme/icon.png" alt="" width="96">
 
 # Sentroy Monitor
 
-### Time tracking your team can read, and nothing it shouldn't.
+**Open-source time and screen activity tracking for your team.**
 
-Start the timer and the tray app records time and an activity percentage. The web app turns
-that into timelines and reports. It never records keystrokes, window titles or what's on a page.
+See who is working on what, for how long, and how active the day was: in one timeline,
+with screenshots and reports, on your own server or ours.
 
-[**Download**](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) · [**Open the web app**](https://monitor.sentroy.com) · [**Self-host**](server/README.md) · [**Sentroy**](https://sentroy.com)
+[**Download**](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) · [**Open the web app**](https://monitor.sentroy.com) · [**Self-host**](server/README.md)
 
 <br>
 
-<img src=".github/readme/timeline.webp" alt="Timeline: ten-minute blocks with activity and the apps in use" width="70%">&nbsp;&nbsp;<img src=".github/readme/agent.webp" alt="Desktop agent with a running timer and the last hour of activity" width="26%">
+<img src=".github/readme/timeline.webp" alt="Timeline of a work day: ten-minute blocks with screenshots, activity and the apps in use" width="100%">
 
 </div>
 
----
+## Features
 
-### Get the app
+<table>
+<tr>
+<td width="62%" valign="top">
 
-| | Download | Notes |
-|---|---|---|
-| **macOS** | [`.dmg`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Universal (Apple silicon + Intel), signed and notarized |
-| **Windows** | [`.exe` / `.msi`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Windows 10 and 11, x64 |
-| **Linux** | [`.AppImage` / `.deb`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest) | Full tracking on X11; time only on Wayland |
+**⏱ Time tracking with one button.** Team members start and stop the timer in a small desktop app
+for macOS, Windows and Linux. Stepping away or ending the day takes one click, with an optional note.
 
-Sign in through your browser with a short code, so your password never goes into the app. Updates
-install with one click; the app never restarts on its own while you're tracking.
+**📸 Screenshots, done respectfully.** Turn them on per workspace, choose how often, and blur them on
+the computer before upload. People get a notice every time. Several displays become one image.
 
-### What it sees
+**📊 Timeline and reports.** Every ten minutes of the day with activity, apps and websites.
+Weekly charts, time per person, clock-in and clock-out times with averages, and CSV export.
 
-|  | Recorded | Never recorded |
-|---|---|---|
-| **Time** | Only while *you* have started the timer | Anything after you stop it |
-| **Input** | How many seconds had keyboard or mouse input | Which keys, what you typed, where you clicked |
-| **Apps** | The name of the app in front ("Figma") | Window titles, file names, documents |
-| **Websites** | Only if your company turns it on: the site name of the tab in front ("github.com"), on macOS | Pages, searches, anything on the page |
-| **Screen** | Screenshots, only if your company turns them on: you get a notice every time, and they can be blurred on your computer before upload. With several displays, one screenshot shows all of them side by side | Anything when screenshots are off (the default) |
+**🖥 Apps and websites.** See which apps were in front and, if you turn it on, which sites (by
+domain only). Never keystrokes, window titles or page contents.
 
-The agent needs no Accessibility or Input Monitoring permission. Data waits on disk while you're
-offline and syncs when you're back. [The full detail →](docs/PRIVACY.md)
+**🔒 Private by design.** Tracking runs only while the timer is on. Data waits on the computer
+while offline and syncs later. [What is recorded →](docs/PRIVACY.md)
 
-### The web app
+**🌍 Six languages.** English, Türkçe, Русский, 中文, Español and Bahasa Indonesia, in the apps and in
+notifications.
 
-- **Timeline**: every ten minutes of the day, with activity and the apps in use.
-- **Reports**: time by person and day, with CSV export.
-- **Settings**: screenshots on or off, how often, blur, idle limit, and how long data is kept.
-- Available in English, Türkçe, Русский, 中文, Español and Bahasa Indonesia.
+</td>
+<td width="38%" valign="top" align="center">
 
-### Run it your way
+<img src=".github/readme/agent.webp" alt="Desktop app with a running timer, the last hour of activity and today's apps" width="100%">
 
-**Hosted**: sign in at [monitor.sentroy.com](https://monitor.sentroy.com) with your Sentroy account.
-It's free; storing screenshots uses your Sentroy Storage plan.
+</td>
+</tr>
+</table>
 
-**Self-hosted**: one `docker compose up` gives you your own users, workspaces, SSO (OpenID Connect)
-and screenshot storage: Sentroy Storage in one click, any S3-compatible bucket, Firebase Storage or a
-local volume. [Set it up →](server/README.md)
+<img src=".github/readme/reports.webp" alt="Reports: tracked time per day, activity split and working hours per person" width="100%">
 
-<details>
-<summary><b>Build from source</b></summary>
+### Works with Sentroy
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+<img src=".github/readme/storage.webp" alt="" width="28" align="left">&nbsp;**Sentroy Storage**<br clear="left">
+
+Screenshots go to your Sentroy Storage bucket, connected in one click. Prefer your own? Any
+S3-compatible bucket, Firebase Storage or a local disk works too.
+
+<img src=".github/readme/storage-card.webp" alt="Sentroy Storage connected in Monitor settings" width="100%">
+
+</td>
+<td width="50%" valign="top">
+
+<img src=".github/readme/chaby.webp" alt="" width="28" align="left">&nbsp;**Chaby**<br clear="left">
+
+Clock-ins, breaks and end-of-day reports are posted to a Chaby channel of your choice, or sent to
+any webhook (Slack-compatible, signed).
+
+<img src=".github/readme/notify-card.webp" alt="Chaby channel connected in Monitor notification settings" width="100%">
+
+</td>
+</tr>
+</table>
+
+## Quick install
+
+**Hosted (easiest).** Sign in at [monitor.sentroy.com](https://monitor.sentroy.com) with your
+Sentroy account; your workspace and Sentroy Storage are set up for you. Then everyone installs the
+desktop app:
+
+| macOS | Windows | Linux |
+|:---:|:---:|:---:|
+| [Download `.dmg`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest)<br><sub>Apple silicon + Intel</sub> | [Download `.exe`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest)<br><sub>Windows 10 and 11</sub> | [`.AppImage` / `.deb`](https://github.com/Sentroy-Co/sentroy-monitor-desktop/releases/latest)<br><sub>X11; time only on Wayland</sub> |
+
+**Self-hosted.** Your own users, workspaces and single sign-on, with MongoDB or PostgreSQL:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Sentroy-Co/sentroy-monitor-desktop/main/server/docker-compose.yml
+echo "MONITOR_PUBLIC_URL=https://monitor.example.com" > .env
+echo "MONITOR_ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
+docker compose up -d
+```
+
+Open `/setup` to create the first administrator. [Full self-host guide →](server/README.md)
+
+## How it works
+
+1. **Sign in.** Open the desktop app, click **Continue with Sentroy** (or enter your server's
+   address) and confirm the short code in your browser. Your password never goes into the app.
+2. **Start the timer.** The app records time, activity and the apps in front, plus screenshots
+   if your workspace turned them on. Stop it for a break or end the day with a note.
+3. **Follow the team.** Owners and admins see everyone's timeline, reports and working hours in the
+   web app; members see their own.
+4. **Set it up your way.** In **Settings**: screenshots and blur, website tracking, idle limit,
+   data retention, storage, and Chaby or webhook notifications. App updates install with one click.
 
 <br>
 
-Tauri 2 and Rust, with a plain HTML/JS interface in `ui/`.
+<div align="center">
 
-```bash
-npm install
-npm run dev     # run the app
-npm test        # Rust tests + UI tests
-```
+<a href="https://sentroy.com">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/readme/sentroy-logo-dark.svg">
+    <img src=".github/readme/sentroy-logo-light.svg" alt="Sentroy" width="150">
+  </picture>
+</a>
 
-To work against a local server, start it on port 3014 and enter `http://localhost:3014` on the
-sign-in screen. Linux needs WebKitGTK, appindicator and the X11/PipeWire headers listed in
-`.github/workflows/release.yml`.
+<sub>Sentroy Monitor is built and supported by <a href="https://sentroy.com">Sentroy</a>.<br>
+Fair Source under <a href="LICENSE">FSL-1.1-ALv2</a> (becomes Apache 2.0 after two years) · <a href="docs/DEVELOPMENT.md">Development</a> · <a href="docs/PRIVACY.md">Privacy</a></sub>
 
-Releases and auto-update signing: [docs/RELEASING.md](docs/RELEASING.md).
-
-</details>
-
-<div align="center"><sub>Part of <a href="https://github.com/Sentroy-Co">Sentroy</a> · Fair Source under <a href="LICENSE">FSL-1.1-ALv2</a> · <a href="https://sentroy.com">sentroy.com</a></sub></div>
+</div>
